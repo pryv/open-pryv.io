@@ -22,9 +22,45 @@ const { coreIdProblem } = require('platform/src/coreIdentity.ts');
 const { validateMailTemplate } = require('mail/src/templateValidator.ts');
 const { USERNAME_REGEXP_STR, USERNAME_MIN_LENGTH, USERNAME_MAX_LENGTH } = require('../schema/helpers.ts');
 const USERNAME_RE = new RegExp(USERNAME_REGEXP_STR);
+const { adminRoute, digestOf, setAuditDetails } = require('../methods/helpers/adminAudit.ts');
 
 function errMessage (err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/** A short text from a request, for an audit record; anything else is left out. */
+function shortText (v: unknown): string | undefined {
+  return typeof v === 'string' && v.length > 0 && v.length <= 256 ? v : undefined;
+}
+
+/**
+ * What the record of an administration act served here names (see
+ * methods/helpers/adminAudit.ts `adminRoute`): set by the handler, read once
+ * the answer is sent. Never a secret, a body or a value of a unique field.
+ */
+function setAdminAct (res: Response, act: { target?: Record<string, string | undefined>; diff?: Record<string, unknown>; targetUserId?: string; targetAction?: string }): void {
+  const next: Record<string, unknown> = Object.assign({}, res.locals.adminAct);
+  if (act.target != null) {
+    const target: Record<string, string> = {};
+    for (const [k, v] of Object.entries(act.target)) if (v != null) target[k] = v;
+    next.target = Object.keys(target).length > 0 ? target : undefined;
+  }
+  if (act.diff != null) next.diff = Object.assign({}, next.diff, act.diff);
+  if (act.targetUserId != null) next.targetUserId = act.targetUserId;
+  if (act.targetAction != null) next.targetAction = act.targetAction;
+  res.locals.adminAct = next;
+  // Also on the prepared record, so an error the error middleware records keeps the target.
+  if (res.locals.adminContext != null) setAuditDetails(res.locals.adminContext, { target: next.target as Record<string, string> | undefined, diff: next.diff as Record<string, unknown> | undefined });
+}
+
+/** The account an act changed, when it is on this core: the act is also recorded in its own trail. */
+async function noteTargetAccount (res: Response, username: unknown, action: string): Promise<void> {
+  if (typeof username !== 'string') return;
+  try {
+    const { getUsersRepository } = require('business/src/users/index.ts');
+    const userId = await (await getUsersRepository()).getUserIdForUsername(username);
+    if (userId != null) setAdminAct(res, { targetUserId: userId, targetAction: action });
+  } catch (_e) { /* not an account of this core */ }
 }
 
 // System (e.g. registration server) calls route handling.
@@ -73,8 +109,13 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
     systemAPI.call(req.context, { accessId: req.params.accessId }, methodCallback(res, next, 200));
   });
   // --------------------- admin user listing ----------------- //
+  // Optional paging: ?limit&skip&search (prefix of the username).
   expressApp.get(Paths.System + '/admin/users', setMethodId('system.listUsers'), function (req: PryvRequest, res: Response, next: NextFunction) {
-    systemAPI.call(req.context, {}, methodCallback(res, next, 200));
+    const params: Record<string, unknown> = {};
+    for (const key of ['limit', 'skip', 'search']) {
+      if (req.query[key] != null) params[key] = req.query[key];
+    }
+    systemAPI.call(req.context, params, methodCallback(res, next, 200));
   });
   // --------------------- admin cores listing ----------------- //
   expressApp.get(Paths.System + '/admin/cores', setMethodId('system.listCores'), function (req: PryvRequest, res: Response, next: NextFunction) {
@@ -168,10 +209,11 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
   // Use cases: key compromise, manual rotation, debugging. Body:
   //   { hostname?: string }   // omit to renew the core's primary host
   // Returns: { ok, hostname, issuedAt, expiresAt }.
-  expressApp.post(Paths.System + '/admin/certs/force-renew', contentType.json, async (req: PryvRequest, res: Response, next: NextFunction) => {
+  expressApp.post(Paths.System + '/admin/certs/force-renew', contentType.json, setMethodId('system.certs.renew'), adminRoute(), async (req: PryvRequest, res: Response, next: NextFunction) => {
     try {
       const { forceRenew } = require('./forceRenewIpc.ts');
       const hostname = req.body?.hostname;
+      setAdminAct(res, { target: { hostname: shortText(hostname) } });
       if (hostname != null && typeof hostname !== 'string') {
         return res.status(400).json({ error: 'hostname must be a string when provided' });
       }
@@ -196,7 +238,7 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
   // --------------------- admin certs listing ----------------- //
   // Read-only. Returns the cert metadata PlatformDB has (hostname +
   // validity dates) — never the cert or key material itself.
-  expressApp.get(Paths.System + '/admin/certs', async (req: PryvRequest, res: Response, next: NextFunction) => {
+  expressApp.get(Paths.System + '/admin/certs', setMethodId('system.certs.list'), async (req: PryvRequest, res: Response, next: NextFunction) => {
     try {
       const platformDB = require('storages').platformDB;
       const certs: Array<{ hostname?: string; issuedAt?: number; expiresAt?: number }> =
@@ -242,7 +284,7 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
     }
     return failure;
   }
-  expressApp.get(Paths.System + '/admin/mail/templates', async (req: PryvRequest, res: Response, next: NextFunction) => {
+  expressApp.get(Paths.System + '/admin/mail/templates', setMethodId('system.mailTemplates.list'), async (req: PryvRequest, res: Response, next: NextFunction) => {
     try {
       const platformDB = require('storages').platformDB;
       const rows: Array<{ type: string; lang: string; part: string; pug: string }> =
@@ -257,7 +299,7 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
       next(err);
     }
   });
-  expressApp.get(Paths.System + '/admin/mail/templates/:type/:lang/:part', async (req: PryvRequest, res: Response, next: NextFunction) => {
+  expressApp.get(Paths.System + '/admin/mail/templates/:type/:lang/:part', setMethodId('system.mailTemplates.get'), async (req: PryvRequest, res: Response, next: NextFunction) => {
     try {
       const { type, lang, part } = req.params;
       const platformDB = require('storages').platformDB;
@@ -271,11 +313,14 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
       next(err);
     }
   });
-  expressApp.put(Paths.System + '/admin/mail/templates/:type/:lang/:part', contentType.json, async (req: PryvRequest, res: Response, next: NextFunction) => {
+  expressApp.put(Paths.System + '/admin/mail/templates/:type/:lang/:part', contentType.json, setMethodId('system.mailTemplates.set'), adminRoute(), async (req: PryvRequest, res: Response, next: NextFunction) => {
     try {
       const { type, lang, part } = req.params;
+      setAdminAct(res, { target: { type: shortText(type), lang: shortText(lang), part: shortText(part) } });
       const pug = req.body && typeof req.body.pug === 'string' ? req.body.pug : null;
       if (pug == null) return next(errors.invalidRequestStructure('body must be { pug: string }'));
+      // The template is recorded by size and digest, never as text.
+      setAdminAct(res, { diff: { pug: digestOf(pug) } });
       // Templates compile to code: only the allowed subset is stored.
       const { ok, problems } = validateMailTemplate({ type, lang, part, pug });
       if (!ok) return next(errors.invalidParametersFormat('mail template is not allowed', { problems }));
@@ -289,9 +334,10 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
       next(err);
     }
   });
-  expressApp.delete(Paths.System + '/admin/mail/templates/:type/:lang/:part', async (req: PryvRequest, res: Response, next: NextFunction) => {
+  expressApp.delete(Paths.System + '/admin/mail/templates/:type/:lang/:part', setMethodId('system.mailTemplates.delete'), adminRoute(), async (req: PryvRequest, res: Response, next: NextFunction) => {
     try {
       const { type, lang, part } = req.params;
+      setAdminAct(res, { target: { type: shortText(type), lang: shortText(lang), part: shortText(part) } });
       const platformDB = require('storages').platformDB;
       await platformDB.deleteMailTemplate(type, lang, part);
       const reloadFailure = await refreshMailTemplates();
@@ -302,9 +348,11 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
       next(err);
     }
   });
-  expressApp.post(Paths.System + '/admin/mail/send-test', contentType.json, async (req: PryvRequest, res: Response, next: NextFunction) => {
+  expressApp.post(Paths.System + '/admin/mail/send-test', contentType.json, setMethodId('system.mail.sendTest'), adminRoute(), async (req: PryvRequest, res: Response, next: NextFunction) => {
     try {
       const { type, lang, recipient } = req.body || {};
+      // The recipient is not recorded (an address).
+      setAdminAct(res, { target: { type: shortText(type), lang: shortText(lang) } });
       if (!type || !lang || !recipient) {
         return next(errors.invalidRequestStructure('body must be { type, lang, recipient }'));
       }
@@ -347,8 +395,10 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
   // (the gate lets it through, see system-permissions.ts). The handler verifies the token via
   // TokenStore, flips PlatformDB's `available:true`, returns a cluster snapshot.
   // Refusals share one 401 body; their reason is logged here.
-  expressApp.post(Paths.System + '/admin/cores/ack', contentType.json, async (req: PryvRequest, res: Response, next: NextFunction) => {
+  expressApp.post(Paths.System + '/admin/cores/ack', contentType.json, setMethodId('system.cores.ack'), adminRoute(), async (req: PryvRequest, res: Response, next: NextFunction) => {
     try {
+      // Recorded without a subject (the join token is the credential, never recorded).
+      setAdminAct(res, { target: { coreId: shortText(req.body?.coreId) } });
       const TokenStore = require('business/src/bootstrap/index.ts').TokenStore;
       const ackHandler = require('business/src/bootstrap/index.ts').ackHandler;
       const tokensPath = config.get('cluster:tokens:path');
@@ -366,9 +416,14 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
     }
   });
   // --------------------- user validation (pre-registration) ----------------- //
-  expressApp.post(Paths.System + '/users/validate', contentType.json, async (req: PryvRequest, res: Response, next: NextFunction) => {
+  expressApp.post(Paths.System + '/users/validate', contentType.json, setMethodId('system.users.validate'), adminRoute(), async (req: PryvRequest, res: Response, next: NextFunction) => {
     try {
       const { username, invitationToken, uniqueFields = {} } = req.body;
+      // The names of the unique fields, never their values; no invitation token.
+      setAdminAct(res, {
+        target: { username: shortText(username), core: shortText(req.body?.core) },
+        diff: uniqueFields != null && typeof uniqueFields === 'object' ? { uniqueFields: Object.keys(uniqueFields).filter((k) => k !== 'username').slice(0, 50) } : undefined
+      });
       // The username keys the reservation and the invitation claim below.
       if (typeof username !== 'string' || username === '') {
         return res.status(400).json({ reservation: false, error: { id: 'invalid-parameters-format', message: 'username is required' } });
@@ -492,9 +547,12 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
     }
   });
   // --------------------- user update (system) ----------------- //
-  expressApp.put(Paths.System + '/users', contentType.json, async (req: PryvRequest, res: Response, next: NextFunction) => {
+  expressApp.put(Paths.System + '/users', contentType.json, setMethodId('system.users.update'), adminRoute(), async (req: PryvRequest, res: Response, next: NextFunction) => {
     try {
       const { username, user: fieldsForUpdate = {}, fieldsToDelete = {} } = req.body;
+      // The names of the fields changed, never their values.
+      const names = (o: unknown) => (o != null && typeof o === 'object' ? Object.keys(o).slice(0, 50) : []);
+      setAdminAct(res, { target: { username: shortText(username) }, diff: { updated: names(fieldsForUpdate), deleted: names(fieldsToDelete) } });
       if (!username) {
         return next(errors.invalidParametersFormat('Missing username'));
       }
@@ -544,17 +602,19 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
         }
       }
 
+      await noteTargetAccount(res, username, 'account.platformFields.changedByAdmin');
       res.status(200).json({ user: true });
     } catch (err) {
       next(err);
     }
   });
   // --------------------- user delete (system, with onlyReg/dryRun) ----------------- //
-  expressApp.delete(Paths.System + '/users/:username', async (req: PryvRequest, res: Response, next: NextFunction) => {
+  expressApp.delete(Paths.System + '/users/:username', setMethodId('system.users.delete'), adminRoute(), async (req: PryvRequest, res: Response, next: NextFunction) => {
     try {
       const username = req.params.username;
       const onlyReg = req.query.onlyReg === 'true';
       const dryRun = req.query.dryRun === 'true';
+      setAdminAct(res, { target: { username: shortText(username) }, diff: { onlyReg, dryRun } });
 
       if (!onlyReg) {
         return next(errors.invalidOperation(
@@ -600,6 +660,7 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
         // this core's live user unreachable and let another core claim the
         // name. The full cascading delete (DELETE /users/:username) is what
         // frees routing, via repository.deleteOne -> platform.deleteUserCore.
+        await noteTargetAccount(res, username, 'account.platformFields.changedByAdmin');
       }
 
       res.status(200).json({ result: { dryRun: !!dryRun, deleted: !dryRun } });
@@ -611,8 +672,10 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
   // B's core delivers (or cancels) a delegation invite to A's core. Admin-key
   // gated by the /system/* guard above. Writes the A-side mirror through the
   // plugin's data-access layer (never the guarded routes). Idempotent per relId.
-  expressApp.post(Paths.System + '/delegation/invite', contentType.json, async (req: PryvRequest, res: Response, next: NextFunction) => {
+  expressApp.post(Paths.System + '/delegation/invite', contentType.json, setMethodId('system.delegation.invite'), adminRoute(), async (req: PryvRequest, res: Response, next: NextFunction) => {
     try {
+      // The relationship and the local account it is for; no capability.
+      setAdminAct(res, { target: { username: shortText(req.body?.delegateUsername), relId: shortText(req.body?.relId) }, diff: { action: shortText(req.body?.action) ?? 'create' } });
       if (config.get('delegation:active') === false) {
         return next(errors.unknownResource());
       }
@@ -645,8 +708,10 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
   // the /system/* guard above. Claims the username platform-wide + creates the
   // user through the repository path, then writes the active anchor + mints the
   // control access; any failure after the claim rolls the whole account back.
-  expressApp.post(Paths.System + '/delegation/create-account', contentType.json, async (req: PryvRequest, res: Response, next: NextFunction) => {
+  expressApp.post(Paths.System + '/delegation/create-account', contentType.json, setMethodId('system.delegation.createAccount'), adminRoute(), async (req: PryvRequest, res: Response, next: NextFunction) => {
     try {
+      // The new account's name and the relationship; no address, no password.
+      setAdminAct(res, { target: { username: shortText(req.body?.username), relId: shortText(req.body?.relId) } });
       if (config.get('delegation:active') === false) {
         return next(errors.unknownResource());
       }

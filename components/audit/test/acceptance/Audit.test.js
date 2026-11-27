@@ -213,9 +213,10 @@ describe('[AUDT] Audit', function () {
         await settleAudit();
       });
 
-      // The registration call itself has no user: syslog only. The server's
-      // own record of the creation (`account.created`) goes to the new
-      // account's trail, and to syslog like any audited action.
+      // The registration call itself has no user: its stored copy goes to the
+      // platform trail of the core. The server's own record of the creation
+      // (`account.created`) goes to the new account's trail, and to syslog
+      // like any audited action.
       it('[JU8F] validates the response', async function () {
         assert.strictEqual(res.status, 201, '[JU8F] must return 201');
         const newUserId = await (await require('business/src/users/index.ts').getUsersRepository()).getUserIdForUsername(newUsername);
@@ -223,8 +224,8 @@ describe('[AUDT] Audit', function () {
         const actions = (spy) => spy.getCalls().map((c) => c.args[1]?.content?.action).sort();
         assert.deepStrictEqual(actions(eventForUserSpy), ['account.created', 'auth.register'], 'two audit records');
         assert.deepStrictEqual(actions(sysLogSpy), ['account.created', 'auth.register'], '[KPPH] must log both in syslog');
-        assert.strictEqual(storageSpy.callCount, 1, '[EI1U] only the creation record is stored');
-        assert.strictEqual(storageSpy.firstCall.args[0], newUserId, '[EI1U] in the new account\'s trail');
+        assert.deepStrictEqual(storageSpy.getCalls().map((c) => c.args[0]).sort(), [newUserId, CONSTANTS.PLATFORM_TRAIL_USER_ID].sort(),
+          '[EI1U] the creation record in the new account\'s trail, the call in the platform trail');
         const created = eventForUserSpy.getCalls().find((c) => c.args[1]?.content?.action === 'account.created');
         assert.strictEqual(created.args[0], newUserId);
       });
@@ -458,7 +459,8 @@ describe('[AUDT] Audit', function () {
         });
         it('[ADZL] validates logging and storage', function () {
           const numAudited = apiMethods.AUDITED_METHODS.length;
-          const numStored = apiMethods.AUDITED_METHODS.length - apiMethods.WITHOUT_USER_METHODS.length;
+          // with a user in its trail, without one in the platform trail
+          const numStored = apiMethods.AUDITED_METHODS.length;
           assert.strictEqual(sysLogSpy.callCount, numAudited, '[ADZL] must log it in syslog');
           assert.strictEqual(storageSpy.callCount, numStored, '[5243] must save it to storage');
         });
@@ -478,9 +480,7 @@ describe('[AUDT] Audit', function () {
         });
         it('[Q2H9] validates logging and storage', function () {
           const logged = apiMethods.AUDITED_METHODS.filter(m => !exclude.includes(m));
-          const stored = apiMethods.AUDITED_METHODS
-            .filter(m => !apiMethods.WITHOUT_USER_METHODS.includes(m))
-            .filter(m => !exclude.includes(m));
+          const stored = apiMethods.AUDITED_METHODS.filter(m => !exclude.includes(m));
           assert.strictEqual(sysLogSpy.callCount, logged.length, '[Q2H9] must log it in syslog');
           assert.strictEqual(storageSpy.callCount, stored.length, '[BGXC] must save it to storage');
         });
@@ -500,9 +500,7 @@ describe('[AUDT] Audit', function () {
         });
         it('[WDZ9] validates logging and storage', function () {
           const logged = apiMethods.AUDITED_METHODS.filter(m => include.includes(m));
-          const stored = apiMethods.AUDITED_METHODS
-            .filter(m => !apiMethods.WITHOUT_USER_METHODS.includes(m))
-            .filter(m => include.includes(m));
+          const stored = apiMethods.AUDITED_METHODS.filter(m => include.includes(m));
           assert.strictEqual(sysLogSpy.callCount, logged.length, '[WDZ9] must log it in syslog');
           assert.strictEqual(storageSpy.callCount, stored.length, '[E7S0] must save it to storage');
         });
@@ -557,7 +555,7 @@ describe('[AUDT] Audit', function () {
           await audit.reloadConfig();
           await resetSpies();
           await auditAllMethods();
-          stored = apiMethods.WITH_USER_METHODS.filter(m => !excluded.includes(m));
+          stored = apiMethods.AUDITED_METHODS.filter(m => !excluded.includes(m));
           logged = apiMethods.AUDITED_METHODS.filter(m => !excluded.includes(m));
         });
         it('[JBPZ] validates logging and storage', function () {

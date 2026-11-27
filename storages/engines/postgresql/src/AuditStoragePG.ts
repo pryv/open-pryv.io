@@ -12,6 +12,7 @@ const require = createRequire(import.meta.url);
 const { LRUCache: LRU } = require('lru-cache');
 const { UserAuditDatabasePG } = require('./UserAuditDatabasePG.ts');
 const { _internals } = require('./_internals.ts');
+const { isPlatformTrail, platformTrailDeletionError } = require('../../../interfaces/auditStorage/AuditStorage.ts');
 
 const CACHE_SIZE = 500;
 const VERSION = '1.0.0';
@@ -97,7 +98,13 @@ class AuditStoragePG {
     return this.guard.on;
   }
 
+  /** The platform trail is kept here, under its reserved id (see AuditStorage.ts). */
+  acceptsPlatformTrail (): boolean {
+    return true;
+  }
+
   async deleteUser (userId: string): Promise<void> {
+    if (isPlatformTrail(userId)) throw platformTrailDeletionError();
     this.logger.info('deleteUser: ' + userId);
     this.userDBsCache.delete(userId);
     await this.db.query('DELETE FROM audit_events WHERE user_id = $1', [userId]);

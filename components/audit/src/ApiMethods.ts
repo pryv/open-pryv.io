@@ -242,10 +242,8 @@ const ALL_METHODS = [
 
 const NOT_AUDITED_METHODS = [
   'service.info',
-  'system.getUserInfo',
-  // getAccess is a pure PlatformDB read carrying no user method-context; it
-  // must not reach per-user audit storage.forUser(undefined).
-  'system.getAccess',
+  // (system.getUserInfo and system.getAccess are audited: platform trail,
+  // see apiMethods/adminAudit.ts.)
   'auth.usernameCheck',
   'auth.emailCheck',
   'auth.cores',
@@ -278,7 +276,9 @@ const NOT_AUDITED_METHODS = [
 
 const AUDITED_METHODS = ALL_METHODS.filter(m => !NOT_AUDITED_METHODS.includes(m));
 
-// doesnt include non-audited ones
+// Audited ids whose call has no account of this core in its context: syslog,
+// and the platform trail of the core when the audit storage keeps it (never
+// an account's trail). Doesn't include non-audited ones.
 const WITHOUT_USER_METHODS = [
   'auth.register',
   'auth.emailChallenge',
@@ -307,8 +307,8 @@ const WITHOUT_USER_METHODS = [
   'mfa.recover',
   // OAuth events with no resolvable user at emit time (pre-consent /authorize,
   // /refuse, or reuse of an already-consumed code/refresh where the user is
-  // unknown). These route to syslog only — never per-user storage — so they
-  // must NOT reach storage.forUser(undefined). Keep in lock-step with
+  // unknown). These go to syslog and the platform trail, never to an account's
+  // trail, so they must NOT reach storage.forUser(undefined). Keep in lock-step with
   // components/oauth2/src/audit.ts#USERLESS_EVENTS.
   'oauth.consent.shown',
   'oauth.consent.refused',

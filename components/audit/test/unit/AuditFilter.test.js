@@ -91,7 +91,7 @@ describe('[AFLT] AuditFilter', () => {
       assert.strictEqual(storageOnly(['accesses.created', 'auth.login', 'account.update']), false, 'a one-by-one list without it');
       assert.deepStrictEqual(storageOnly(['accesses.created', 'account.created']), { storage: true });
       assert.strictEqual(storageOnly([], ['account.all']), false);
-      // The register call itself stays syslog-only.
+      // The register call itself is recorded without a user (the platform trail).
       assert.ok(apiMethods.WITHOUT_USER_METHODS.includes('auth.register'));
     });
     // Mutation caught: an id declared without a user (it would reach syslog only).
@@ -106,8 +106,29 @@ describe('[AFLT] AuditFilter', () => {
         assert.strictEqual(storageOnly(['accesses.created', 'auth.login', 'account.created']), false, action + ': a one-by-one list without it');
         assert.deepStrictEqual(storageOnly(['account.created', action]), { storage: true }, action);
       }
-      // The deletion call itself stays syslog-only.
+      // The deletion call itself is recorded without a user (the platform trail).
       assert.ok(apiMethods.WITHOUT_USER_METHODS.includes('auth.delete'));
+    });
+    it('[AFPT] a method without a user goes to the platform trail by the storage filter, a method with one never does', () => {
+      const of = (include, exclude = []) => new AuditFilter({ syslogFilter: buildFilter([], ['all']), storageFilter: buildFilter(include, exclude) });
+      for (const m of apiMethods.AUDITED_METHODS) {
+        const channels = of(['all']).isAudited(m);
+        if (apiMethods.WITHOUT_USER_METHODS.includes(m)) {
+          assert.deepStrictEqual(channels, { platformTrail: true }, m);
+        } else {
+          assert.deepStrictEqual(channels, { storage: true }, m);
+        }
+      }
+      assert.deepStrictEqual(of(['system.all']).isAudited('system.createUser'), { platformTrail: true });
+      assert.strictEqual(of(['events.all']).isAudited('system.createUser'), false);
+      assert.strictEqual(of([], ['system.createUser']).isAudited('system.createUser'), false);
+      assert.strictEqual(of(['all']).isAudited('system.listCores'), false, 'a read declared not audited');
+      for (const m of ['system.getUserInfo', 'system.getAccess', 'system.listUsers', 'system.users.update', 'system.mailTemplates.set']) {
+        assert.deepStrictEqual(of(['all']).isAudited(m), { platformTrail: true }, m);
+      }
+      for (const m of ['system.audit.get', 'system.certs.list', 'system.mailTemplates.list', 'system.mailTemplates.get']) {
+        assert.strictEqual(of(['all']).isAudited(m), false, m + ' is a read not audited');
+      }
     });
   });
 
