@@ -100,13 +100,19 @@ async function runUp (runner, args) {
   const applied = await runner.runAll(opts);
   if (applied.length === 0) {
     console.log('No pending migrations.');
-    return;
+  } else {
+    const prefix = args.dryRun ? '[dry-run]' : '';
+    for (const a of applied) {
+      console.log(`${prefix} ${a.engineId}: ${a.filename}  ${a.fromVersion} → ${a.toVersion}${args.dryRun ? '' : `  (${a.durationMs}ms)`}`);
+    }
+    console.log(`${args.dryRun ? 'Would apply' : 'Applied'} ${applied.length} migration(s).`);
   }
-  const prefix = args.dryRun ? '[dry-run]' : '';
-  for (const a of applied) {
-    console.log(`${prefix} ${a.engineId}: ${a.filename}  ${a.fromVersion} → ${a.toVersion}${args.dryRun ? '' : `  (${a.durationMs}ms)`}`);
-  }
-  console.log(`${args.dryRun ? 'Would apply' : 'Applied'} ${applied.length} migration(s).`);
+  // The pass the core runs at every start with autoRunOnStart (see bin/master.js).
+  if (args.dryRun || args.target != null) return;
+  const tokensAtRest = require('storages').getTokensAtRest();
+  const res = await tokensAtRest.protectTokensAtRest();
+  const changed = Object.entries(res).filter(([, n]) => n > 0);
+  if (changed.length > 0) console.log(`Access tokens at rest: ${changed.map(([k, n]) => `${k}: ${n}`).join(', ')}`);
 }
 
 // ---------------------------------------------------------------------------
