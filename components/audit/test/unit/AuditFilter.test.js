@@ -132,6 +132,50 @@ describe('[AFLT] AuditFilter', () => {
     });
   });
 
+  describe('[AF03] include and exclude together', () => {
+    const channelsOf = (filter) => Object.fromEntries(apiMethods.ALL_METHODS.map((m) => [m, filter.isAudited(m)]));
+    const both = (f) => new AuditFilter({ syslogFilter: f, storageFilter: f });
+    /** The methods a filter selects in syslog, and in either trail. */
+    function selected (filter) {
+      const channels = channelsOf(filter);
+      return {
+        syslog: apiMethods.ALL_METHODS.filter((m) => channels[m] && channels[m].syslog === true),
+        stored: apiMethods.ALL_METHODS.filter((m) => channels[m] && (channels[m].storage === true || channels[m].platformTrail === true))
+      };
+    }
+
+    // Mutation caught: "all" in `include` read as a method id, which selected
+    // nothing as soon as `exclude` named anything (the whole audit lost).
+    it('[AFIA] include "all" with exclusions selects every audited method but the excluded ones, in syslog and in storage', () => {
+      const exclude = ['events.get', 'system.createUser', 'streams.all'];
+      const expanded = ['events.get', 'system.createUser', ...apiMethods.ALL_METHODS.filter((m) => m.startsWith('streams.'))];
+      const expected = apiMethods.AUDITED_METHODS.filter((m) => !expanded.includes(m));
+      const { syslog, stored } = selected(both(buildFilter(['all'], exclude)));
+      assert.deepStrictEqual(syslog, expected);
+      assert.deepStrictEqual(stored, expected);
+      assert.ok(expected.length > 50, 'most of the audit is kept');
+      // the same as the exclude-only form
+      assert.deepStrictEqual(selected(both(buildFilter([], exclude))), { syslog: expected, stored: expected });
+    });
+
+    it('[AFIE] an explicit include with exclusions selects the included ones less the excluded ones', () => {
+      const { syslog, stored } = selected(both(buildFilter(['events.all', 'system.createUser', 'auth.login'], ['events.get', 'auth.login'])));
+      const expected = apiMethods.AUDITED_METHODS.filter((m) => (m.startsWith('events.') && m !== 'events.get') || m === 'system.createUser');
+      assert.deepStrictEqual(syslog, expected);
+      assert.deepStrictEqual(stored, expected);
+    });
+
+    it('[AFID] defaults: everything audited with no filter given or `include: [all], exclude: []`; "all" on both sides selects nothing', () => {
+      for (const filter of [new AuditFilter(), both(buildFilter(['all'], []))]) {
+        const { syslog, stored } = selected(filter);
+        assert.deepStrictEqual(syslog, apiMethods.AUDITED_METHODS);
+        assert.deepStrictEqual(stored, apiMethods.AUDITED_METHODS);
+      }
+      assert.deepStrictEqual(selected(both(buildFilter(['all'], ['all']))), { syslog: [], stored: [] });
+      assert.deepStrictEqual(selected(both(buildFilter([], ['all']))), { syslog: [], stored: [] });
+    });
+  });
+
   describe('[AF02] initialization', () => {
     it('[H8RB] must expand aggregate methods', () => {
       const filter = new AuditFilter({ syslogFilter: buildFilter(), storageFilter: buildFilter(['events.all']) });

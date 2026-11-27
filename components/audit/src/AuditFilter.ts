@@ -98,12 +98,12 @@ class AuditFilter {
           return buildMap(baseMethods.filter((m: string) => !exclude.includes(m)));
         }
       } else {
-        // both included and excluded
-        return buildMap(
-          baseMethods
-            .filter((m: string) => include.includes(m))
-            .filter((m: string) => !exclude.includes(m))
-        );
+        // both included and excluded: what `include` selects (every method
+        // for "all"), less what `exclude` names. "all" on both sides selects
+        // nothing.
+        if (hasAll(include) && hasAll(exclude)) return {};
+        const included = hasAll(include) ? baseMethods : baseMethods.filter((m: string) => include.includes(m));
+        return buildMap(included.filter((m: string) => !exclude.includes(m)));
       }
     }
 
