@@ -15,7 +15,7 @@ const Paths = require('./Paths.ts');
 const methodCallback = require('./methodCallback.ts').default;
 const contentType = require('middleware').contentType;
 const { getLogger } = require('@pryv/boiler');
-const { setMinimalMethodContext, setMethodId, adminAuth } = require('middleware');
+const { setMinimalMethodContext, setMethodId, adminAuth, adminLockdown } = require('middleware');
 const { routeMatcher } = require('./system-permissions.ts');
 const { redactUrl } = require('utils/src/redactUrl.ts');
 const { coreIdProblem } = require('platform/src/coreIdentity.ts');
@@ -37,11 +37,13 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
    * key, an administrator session or a setup session, checked against the
    * route's entry in system-permissions.ts; the routes with their own
    * credential (bootstrap ack, personal-token routes) or none go through. Any
-   * refusal answers 404.
+   * refusal answers 404. Then the lockdown (middleware/src/adminLockdown.ts)
+   * refuses the writes this core marks as managed elsewhere.
    */
   const matchRoute = routeMatcher();
+  const ruleOf = (method: string, path: string) => matchRoute(method, path)?.rule ?? null;
   expressApp.all(Paths.System + '/*', setMinimalMethodContext, adminAuth({
-    rule: (method: string, path: string) => matchRoute(method, path)?.rule ?? null,
+    rule: ruleOf,
     config,
     store: () => require('storages').platformDB,
     onRefused: (req: PryvRequest, reason: string) => {
@@ -49,7 +51,7 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
       // own token sent here by mistake would land in it.
       logger.warn('Unauthorized attempt to access system route', { url: redactUrl(req.url), ip: req.ip, reason });
     }
-  }));
+  }), adminLockdown({ rule: ruleOf, config }));
   expressApp.post(Paths.System + '/create-user', contentType.json, setMethodId('system.createUser'), createUser);
   function createUser (req: PryvRequest, res: Response, next: NextFunction) {
     const params = Object.assign({}, req.body);
@@ -668,4 +670,9 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
   });
   // Setup, administrator sessions, roles and claim codes.
   require('./system-setup.ts').default(expressApp, app);
+  // One file per administration area, each with its list in systemRoutes/.
+  require('./system-admin-roles.ts').default(expressApp, app);
+  require('./system-admin-audit.ts').default(expressApp, app);
+  require('./system-admin-config.ts').default(expressApp, app);
+  require('./system-admin-oauth.ts').default(expressApp, app);
 }

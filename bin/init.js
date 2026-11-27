@@ -983,6 +983,14 @@ ${hasHostedSites ? '# # The hostedSites: block above already holds the administr
 # #     ttlMinutes: 60
 # #     stepUpMinutes: 5
 # #     requireMfa: true
+# #   localPolicy:   # this core only: which administrator grants it accepts
+# #     acceptReplicatedGrants: true   # false: only localGrants count here
+# #     requireLocalScope: []          # permissions only localGrants give here
+# #     localGrants: []                # [{ userId, role }]
+# #   lockdown:      # this core only: managed elsewhere, not editable through the API
+# #     capabilities: {}               # <capability>: editable | readonly | hidden
+# #     platformConfig:
+# #       readonly: []                 # platform configuration keys
 
 # # adapterRoutes: expose a sidecar container (a resource server for this core's
 # # accounts) under /adapter/<name>/ on every host. The core forwards every method,
@@ -1036,6 +1044,7 @@ ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 # # uncommenting the piiMode: cleartext line below.
 # # platform:
 # #   piiMode: cleartext   # opt-out; default is hashed
+# #   configPollSeconds: 15   # checks of the platform store for a configuration change
 
 # # eventFiles — attachments + previews size limits.
 # # previewsMaxInputPixels: an image declaring more pixels is not decoded
