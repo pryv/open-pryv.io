@@ -9,9 +9,13 @@
   trigger `lock_user_index_removal` on `users_index` (`BEFORE DELETE OR UPDATE OF user_id`) takes it exclusive, so
   an account erasure still waits for the inserts in flight and no row is stored after the index entry is gone.
   Many concurrent writers of one account no longer contend on that row. Nothing to do: installed at boot, like the
-  insert triggers; a disabled or missing `lock_user_index_removal` trigger is repaired at boot with a warning.
-  Outside READ COMMITTED (an operator default) inserts keep the row lock.
-- Do not drop or disable `lock_user_index_removal` on its own: the insert triggers rely on it. To remove the guard
+  insert triggers; a missing `lock_user_index_removal` trigger is created again at boot, a disabled one enabled
+  again with a warning. If it cannot be installed (logged at error), inserts keep the row lock of the previous
+  release until a later boot succeeds: the guard stays complete. Outside READ COMMITTED (an operator default)
+  inserts keep the row lock.
+- Do not drop or disable `lock_user_index_removal` on its own: the insert triggers rely on it. A session that deletes
+  from `users_index` with triggers off (`session_replication_role = replica`, `pg_restore --disable-triggers`) no
+  longer waits for the inserts in flight: run such tools with every process stopped. To remove the guard
   (every process stopped), the rollback SQL of the guard gains two lines, run with the others:
 
   ```sql

@@ -10,10 +10,10 @@
   `lock_user_index_removal()` + trigger on `users_index` take the exclusive lock. Install order: removal side first;
   if it cannot be installed, the insert function gets the row-lock body (`ROW_LOCK_FUNCTION_SQL`) so no state leaves
   a hole. Outcome key `users_index`. `usersLocalIndex.ts` unchanged; the audit insert keeps its row lock.
-- Tests `[PGAL1]` to `[PGAL8]` (`storages/engines/postgresql/test/unindexed-user-guard.test.js`): one shared lock and
+- Tests `[PGAL1]` to `[PGAL9]` (`storages/engines/postgresql/test/unindexed-user-guard.test.js`): one shared lock and
   no tuple lock per insert, removal holds inserts back, read committed and repeatable read, id change versus
-  rename, boot repair, previous body coexistence and install order, colliding keys, concurrent writers versus an
-  erasure. `[PGUG*]` unchanged.
+  rename, boot repair, previous body coexistence, colliding keys, concurrent writers versus an erasure, install
+  order and the row-lock fallback on each failure of the removal side. `[PGUG*]` unchanged.
 
 ### MFA: strict session kind in `mfa.confirm` and `mfa.verify`
 

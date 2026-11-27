@@ -94,7 +94,7 @@ BEGIN
   IF current_setting('pryv.unindexed_writes', true) = 'allow' THEN
     RETURN NEW;
   END IF;
-  IF current_setting('transaction_isolation') = 'read committed' THEN
+  IF current_setting('transaction_isolation') IN ('read committed', 'read uncommitted') THEN
     PERFORM pg_advisory_xact_lock_shared(${LOCK_CLASS}, hashtext(NEW.user_id));
     PERFORM 1 FROM users_index WHERE user_id = NEW.user_id;
   ELSE
@@ -166,11 +166,11 @@ async function installUnindexedWritesGuard (client: QueryClient, logger: LoggerL
       await withRetry(() => client.query(INDEX_FUNCTION_SQL), attempts);
       removalSide = await ensureTrigger(client, logger, 'users_index', INDEX_TRIGGER_NAME,
         `CREATE TRIGGER ${INDEX_TRIGGER_NAME} BEFORE DELETE OR UPDATE OF user_id ON users_index FOR EACH ROW EXECUTE FUNCTION lock_user_index_removal()`,
-        attempts, 'the row-lock form of the guard is kept until a later boot installs it');
+        attempts, 'the row-lock form of the guard is used until a later boot installs it');
     } catch (err: unknown) {
       removalSide = 'failed';
       logger.error(`PostgreSQL: the users-index removal lock could not be installed (${(err as Error)?.message}); ` +
-        'the row-lock form of the guard is kept until a later boot installs it');
+        'the row-lock form of the guard is used until a later boot installs it');
     }
     outcome.users_index = removalSide;
     await withRetry(() => client.query(removalSide === 'failed' ? ROW_LOCK_FUNCTION_SQL : FUNCTION_SQL), attempts);
@@ -180,12 +180,16 @@ async function installUnindexedWritesGuard (client: QueryClient, logger: LoggerL
         attempts, 'rows of an unindexed user id are not refused there until a later boot installs it');
     }
   } finally {
-    await client.query('RESET lock_timeout');
+    // A failing reset (a broken connection) must not mask the error being propagated.
+    await client.query('RESET lock_timeout').catch(() => {});
   }
   return outcome;
 }
 
-/** Create `trigger` on `table` where absent, enable it where disabled; never throws. */
+/**
+ * Create `trigger` on `table` where absent, enable it where disabled. A
+ * failing DDL is reported as 'failed', not thrown (the state query can throw).
+ */
 async function ensureTrigger (client: QueryClient, logger: LoggerLike, table: string, trigger: string, createSql: string, attempts: number, consequence: string): Promise<string> {
   const res = await client.query(
     'SELECT tgenabled FROM pg_trigger WHERE tgname = $1 AND tgrelid = $2::regclass', [trigger, table]);
