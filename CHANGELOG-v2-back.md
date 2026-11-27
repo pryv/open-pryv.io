@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Migration runner: one run at a time per PostgreSQL database
+
+- `MigrationRunner` had no cross-process lock (the migrations README said it had one): a booting core and
+  `bin/migrate.js up`, or two cores on one database, each read the version and applied every pending migration. A
+  capability may now give `withLock(fn)`; `runAll()` (not the dry run) runs the engine's pending migrations inside it
+  and reads the version once the lock is held. PostgreSQL holds a session advisory lock of its own
+  (`MIGRATIONS_LOCK_KEY`, distinct from the schema DDL key and from the time sort index migration's key) on a dedicated
+  client for the whole run, polled with `pg_try_advisory_lock` (a waiting `pg_advisory_lock` holds a snapshot that a
+  migration's `CREATE INDEX CONCURRENTLY` would wait for: deadlock), released in `finally` (a failed unlock discards
+  the client). rqlite has no lock and no migration yet (README says so). Tests: storages:postgresql `[PGML1]` (two
+  runners, each migration once), `[PGML2]` (waits for another session's lock, then re-reads the version), `[PGML3]`
+  (the time sort index migration under it, two runners: built once, no deadlock).
+
 ### Test tooling: a development core starts after `just clean-test-data`
 
 - `just clean-test-data` removes the one-time pass markers of the users directory (`accesses-token-protected.done`,

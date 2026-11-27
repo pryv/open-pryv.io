@@ -60,7 +60,8 @@ _internals.migrationsCapability = {
   migrationsDir: path.join(__dirname, '..', 'migrations'),
   async getVersion () { /* read from schema_migrations */ },
   async setVersion (v) { /* write schema_migrations */ },
-  buildContext () { return { db: <handle>, logger: <scoped> }; }
+  buildContext () { return { db: <handle>, logger: <scoped> }; },
+  async withLock (fn) { /* optional: hold a cross-process lock while fn runs */ }
 };
 ```
 
@@ -114,9 +115,18 @@ No `down` subcommand. Forward-only by design.
 
 ## Concurrent cores
 
-Multi-core deployments with a shared PG: the first core to boot wins the migration race via a PG advisory lock the runner acquires during `runAll()`. Other cores block on the lock then observe `version` already at target and no-op.
+An engine may give its capability a `withLock(fn)`: `runAll()` then runs that engine's pending migrations inside it,
+and reads the current version only once the lock is held.
 
-Multi-core with rqlite: Raft serializes writes, so the first SET wins; re-reads by other cores see the bumped version.
+PostgreSQL (a booting core and `bin/migrate.js up`, or several cores on one database): `withLock` holds a session
+advisory lock of its own (`MIGRATIONS_LOCK_KEY` in `SchemaMigrations.ts`) on a dedicated client for the whole run. The
+first runner applies the migrations; the others wait (polling, logged once), then find the version at target and apply
+nothing. The lock is polled, never waited on with `pg_advisory_lock`: a waiting statement holds a snapshot, which a
+migration building an index `CONCURRENTLY` would wait for (deadlock). A migration may take an advisory lock of its own
+under a different key.
+
+rqlite has no `withLock`: Raft serializes the version write, not the migration, so two cores booting together could
+both run a migration. No rqlite migration exists yet; the first one must be idempotent, or add a lock first.
 
 ## Not in scope
 
