@@ -410,8 +410,17 @@ clean-test-data:
     # restart on the same ports. A remote/unmanaged rqlite (no local
     # pidfile) keeps the keyValue-only wipe — its data dir is not ours to
     # touch.
-    if { [ "$RQLITE_HOST" = "localhost" ] || [ "$RQLITE_HOST" = "127.0.0.1" ]; } && [ -f ./var-pryv/rqlite-data/rqlited.pid ]; then
-      RQLITED_PID=$(cat ./var-pryv/rqlite-data/rqlited.pid)
+    # A pidfile left by an earlier instance is stale: its PID may now be another
+    # process, and a node started by hand may be serving this data dir. Trust it
+    # only when it names a live rqlited; otherwise drop it and take the
+    # keyValue-only path below (never delete files under a running node).
+    RQLITED_PID=$(cat ./var-pryv/rqlite-data/rqlited.pid 2>/dev/null || true)
+    if [ -n "$RQLITED_PID" ] && ! ps -p "$RQLITED_PID" -o command= 2>/dev/null | grep -q rqlited; then
+      echo "rqlite: stale pidfile ($RQLITED_PID is not a running rqlited), removed"
+      rm -f ./var-pryv/rqlite-data/rqlited.pid
+      RQLITED_PID=""
+    fi
+    if { [ "$RQLITE_HOST" = "localhost" ] || [ "$RQLITE_HOST" = "127.0.0.1" ]; } && [ -n "$RQLITED_PID" ]; then
       kill "$RQLITED_PID" 2>/dev/null || true
       for i in $(seq 1 40); do kill -0 "$RQLITED_PID" 2>/dev/null || break; sleep 0.25; done
       # The snapshot dir is `rsnapshots` with rqlite 9 and `wsnapshots` with
