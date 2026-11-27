@@ -11,43 +11,61 @@
   (version-2 envelope only; the key id is in the value, so rows without a token hash carry it too). An envelope
   that does not open throws `TokenUnreadableError`.
 - Access `integrity` (both engines, same column / JSON key, no DDL for the value): sealed on every write
-  (`AccessesPG.toStorageItem` / `protectUpdate`, `AccessesSQLite.protectData`), opened on read; a value without the
-  prefix is a clear one and returned as stored. A sealed value that does not open is logged (ids only) and the item
-  is returned without `integrity` (reads never throw for it; the integrity check reports "missing integrity
-  property"). A query on an `integrity` value is refused (`refuseIntegrityValueCondition`; `null` and
+  (`AccessesPG.toStorageItem` / `protectUpdate`, `AccessesSQLite.itemToRow`); an item or update from above the
+  engine never carries a stored form, so every string is sealed there, a `sealed:`-looking one included (it reads
+  back unchanged and never trips the key guard); only the raw passes (conversion, re-key) leave a stored sealed
+  value as is. Opened on read; a value without the prefix is a clear one and returned as stored. A sealed value
+  that does not open is logged once per access and process (ids only) and the item is returned without
+  `integrity` (reads never throw for it; the integrity check reports "missing integrity property"). A query on an `integrity` value is refused (`refuseIntegrityValueCondition`; `null` and
   `{ $ne: null }` pass); SQLite `compareAndSetJson` refuses the path. The wire-form recompute compares and sets on
   the stored value and writes it sealed. Passes: PostgreSQL `sealClearIntegrityRows` (batched compare-and-set,
-  like the token conversion), `unsealIntegrityRows`, `rekeyIntegrityRows`, `hasClearIntegrityRows`,
+  keyset on the primary key), `unsealIntegrityRows`, `rekeyIntegrityRows` (a value that does not open under its
+  previous key is logged, left and listed as `integrityUnreadable`; the run goes on), `hasClearIntegrityRows`,
   `hasForeignKeyIntegrityRows` (two-bound probe), `integrityStatus`; SQLite: the per-user conversion, rollback,
   re-key, foreign-key check and status cover `data.integrity`. The boot guard refuses integrity values under
   another key; the PostgreSQL probe returns `clearIntegrityOnly`, which `tokensAtRestAtBoot` turns into a warning
   (not a refusal) when `migrations.autoRunOnStart` is false.
 - Deleted accesses: `delete()` (both engines) also unsets the token (its three stored forms) and, in the same
-  transaction, drops the token of every history row whose head is deleted (`dropTokensOfDeletedRowsOn` /
-  `_dropTokensOfDeletedRowsSync`, scoped to the user): `modified` untouched, a stored integrity that verifies on the
-  row with its token re-hashed without it, any other kept as stored. `applyDefaults` mints a token for a live head
-  only. `importAll` (a restore) runs the same drop afterwards; `insertMany` (fixtures) does not.
-- Audit: `accesses.create` puts `{ key }` only in `context.auditIntegrityPayload`. Existing records: PostgreSQL
-  migration `20261127_120500` (`content #- '{record,integrity}'` where `content.record.key` starts with `ACCESS:`);
-  SQLite `auditAccessIntegrityScrub.ts` (a walk over the users' audit databases at the start, marker
-  `audit-access-integrity-scrubbed.done`). Audit records carry no integrity of their own (`Audit.ts` never sets
+  transaction, drops the token of the history rows of the heads it marked (`dropTokensOfDeletedRowsOn(client,
+  userId, deletedAt)` / `_dropTokensOfDeletedRowsSync(udb, deletedAt)`: `head_id IN` the heads with `deleted =
+  deletedAt`, through `idx_access_head_id` on PostgreSQL, the `deleted` / `head_id` indexes on SQLite; the passes and
+  `importAll` sweep every deleted row and history row of a deleted head): `modified` untouched, a stored integrity
+  that verifies on the row with its token re-hashed without it, any other kept as stored. `applyDefaults` mints a
+  token for a live head only. `importAll` (a restore) runs the user-wide drop afterwards (not in the import's
+  transaction: a crash between leaves them to the next conversion pass); `insertMany` (fixtures) does not.
+- Audit: `accesses.create` puts `{ key }` only in `context.auditIntegrityPayload`. Existing records are scrubbed by
+  the AUDIT engine, whatever the base one: the storages barrel's `getTokensAtRest().protectTokensAtRest` (master
+  start, `bin/migrate.js up`) calls the audit engine's `scrubAccessAuditIntegrity({ force, auditStorage })`, `force`
+  when the base pass converted rows (a previous image wrote them after a rollback, and its audit records carry the
+  hash). SQLite (`sqlite/src/auditAccessIntegrityScrub.ts`): a walk over the users' audit databases, `VACUUM` of
+  each one changed, marker `audit-access-integrity-scrubbed.done` (`force` walks again). PostgreSQL
+  (`postgresql/src/auditAccessIntegrityScrub.ts`, also migration `20261127_120500`): `content #- '{record,integrity}'`
+  where `content.record.key` starts with `ACCESS:`, through the partial index `idx_audit_access_integrity`
+  (created on first use, empty afterwards), at every start, so a core whose audit alone is on PostgreSQL (its
+  migrations do not run there) is covered too. Audit records carry no integrity of their own (`Audit.ts` never sets
   it), so the content is edited in place. `breachScopeReport` renders an access write as `(key only)`.
 - Deletion notices (`deletionNoticesLocal.ts`, both engines, helpers in `interfaces/_shared/deletionNoticeSeal.ts`):
   a pending row's `api_endpoint` is sealed (context `deletion-notice:<id>`), a terminal row keeps the stripped URL in
   clear; a value that does not open reads as `''`, which `runDeletionOutboxPass` retires as `failed-permanent`
-  with reason `cmc-notice-credential-unreadable`. `protectClearRows` / `unprotectRows` / `rekeyRows` /
-  `sealStatus`, called by `tokensAtRest.ts`. The protection comes from storage init, else from the configuration.
+  with reason `cmc-notice-credential-unreadable`. A pending row's endpoint given from above is sealed whatever its
+  shape. `protectClearRows` / `unprotectRows` / `rekeyRows` (one that does not open under its previous key is logged
+  and left) / `sealStatus`, called by `tokensAtRest.ts`. The protection comes from storage init, else from the
+  configuration. SQLite `status` does not create the notice database when it is absent.
 - PostgreSQL migration `20261127_120400`: `idx_access_integrity_clear` (`accesses(user_id) WHERE integrity IS NOT
   NULL AND integrity NOT LIKE 'sealed:%'`, empty in steady state), `idx_access_integrity_kid`
-  (`left(integrity, 16)` of sealed values), then `protectTokensAtRest(db, { deletedTokens: true })`. The start pass
-  drops deleted tokens only after converting access rows (rows a previous image wrote).
+  (`left(integrity, 16)` of sealed values), `idx_access_head_id` (`accesses(user_id, head_id)` of history rows),
+  then `protectTokensAtRest(db, { deletedTokens: true })`. Migration `20261127_120100` now runs
+  `protectTokensAtRest(db, { tokensOnly: true })`: tokens and sessions only, the rest after `120400`'s indexes. The
+  start pass drops deleted tokens only after converting access rows (rows a previous image wrote).
 - SQLite walk marker: first line `<kid> v2`. A marker without `v2` is a walk to do again (not another key); the
   walk now also drops the tokens of deleted rows; the first use of a user database converts tokens and integrity
   only. `rekey` keeps the marker's walk version.
 - `bin/access-tokens.js`: `status` adds `accessIntegrity` and `deletionNotices` (SQLite also `markerWalk`);
-  `unprotect` / `rekey` report the integrity values and notices they rewrote.
-- Tests: `[TKPA6]`, `[TKBT4]` (business unit); `[TKIN0]`-`[TKIN9]`, `[TKDL1]`-`[TKDL4]`, `[TKDN1]`-`[TKDN3]`,
-  `[TKIA2]` (`components/storage/test/unit/accessTokensAtRest.test.js`; `[TKST6]`, `[TKMG1]`, `[TKPR2]` adjusted);
+  `unprotect` / `rekey` report the integrity values and notices they rewrote; `rekey` lists the integrity values
+  that did not open (user id, access id) with the remedy.
+- Tests: `[TKPA6]`, `[TKBT4]` (business unit); `[TKIN0]`-`[TKIN9]`, `[TKIM1]`, `[TKIR1]`, `[TKUP1]`,
+  `[TKDL1]`-`[TKDL5]`, `[TKDN1]`-`[TKDN3]`, `[TKDN5]`, `[TKIA2]`, `[TKIA3]`
+  (`components/storage/test/unit/accessTokensAtRest.test.js`; `[TKST6]`, `[TKMG1]`, `[TKPR2]` adjusted);
   `[TKDN4]` (`components/cmc/test/deletionOutbox.test.js`); `[TKIA1]` (`components/audit/test/acceptance/integrity.test.js`,
   replaces the check that the record carried the hash).
 

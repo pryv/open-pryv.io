@@ -54,14 +54,19 @@ roll back or change a key.
   release loses the token of its deleted accesses at restore. `bin/hfs-author-scrub.js` maps the tokens of live
   and deleted accesses to repair the authors of high-frequency series written before 2.0.0-rc.40: a core that
   upgrades from an earlier release and never ran it must run it with this image **before the first start** (the
-  start drops the tokens of deleted accesses; afterwards the tool resolves live accesses only).
+  start drops the tokens of deleted accesses; afterwards the tool resolves live accesses only). With access integrity
+  off (`integrity.isActive.accesses: false`), a deletion record keeps the integrity value it had (computed with the
+  token, it no longer verifies): the integrity check reports such records if integrity is switched on again.
 - **Audit records of access writes carry the key only.** The audit record of `accesses.create` named the access by
   `content.record.key` and also copied its `integrity` hash in `content.record.integrity`: the hash is no longer
-  written, and the first start removes it from the records already stored (PostgreSQL: one statement over
-  `audit_events`, a one-time scan of that table, migration `20261127_120500`; SQLite: one walk over the users'
-  audit databases, recorded by a marker file `audit-access-integrity-scrubbed.done` in the users directory). The
-  breach-scope report shows such a write with its key only. Syslog lines already sent and audit exports or backups
-  taken before the upgrade still carry the hash.
+  written, and the first start removes it from the records already stored, in whichever engine holds the audit
+  (`storages.audit.engine`, SQLite by default, whatever the base engine). SQLite: one walk over the users' audit
+  databases, each changed database vacuumed, recorded by a marker file `audit-access-integrity-scrubbed.done` in
+  the users directory. PostgreSQL: one statement over `audit_events` (migration `20261127_120500`; the first run
+  scans the table to build the index `idx_audit_access_integrity`, which stays empty, so the same statement run at
+  every start costs nothing). After a rollback, the next start of this image also scrubs the records the earlier
+  image wrote meanwhile. The breach-scope report shows such a write with its key only. Syslog lines already sent
+  and audit exports or backups taken before the upgrade still carry the hash.
 - **Pending deletion notices.** The endpoint of a revoke notice to a peer platform, kept by the core while an
   account is erased and the peer could not be reached (it holds a token of an access on the peer), is sealed the
   same way while the notice is pending; once delivered or given up it is stored without the token, as before. A
@@ -69,7 +74,7 @@ roll back or change a key.
 - **First start of this release.** Before the workers start, every stored token is converted in place: live,
   deleted and history accesses, and sessions (expired sessions are removed), every stored access `integrity` is
   sealed and every pending deletion notice too. One HMAC, two encryptions and one row update per access; on
-  PostgreSQL it is a migration. With `migrations.autoRunOnStart: false`, integrity values alone waiting for the
+  PostgreSQL it is a migration (tokens first, then the integrity values once their indexes exist). With `migrations.autoRunOnStart: false`, integrity values alone waiting for the
   conversion only warn (lookups do not use them). With `migrations.autoRunOnStart: false` the core refuses to
   start while stored tokens wait for the conversion (they could not be looked up): run `node bin/migrate.js up`,
   then start. On SQLite the user databases are walked once (a marker file `accesses-token-protected.done` in the
@@ -101,9 +106,10 @@ roll back or change a key.
   (treat them as credential stores), and, until vacuum, the old row versions in the data files. On PostgreSQL run
   `VACUUM (FULL) accesses, sessions, cmc_deletion_notices;` once after the upgrade if the old values must be gone
   from the data files (it locks those tables while it runs), and `VACUUM (FULL) audit_events;` for the old
-  integrity copies of the audit records (a large table: plan the lock). On SQLite the first start vacuums each user database it converts and the
-  shared database (a database converted later, at its first use, is not: run `VACUUM` on it; nor are the users'
-  audit databases and the deletion-notice database: run `VACUUM` on them if the old copies must be gone). Backups made by
+  integrity copies of the audit records (a large table: plan the lock). On SQLite the first start vacuums each user
+  database it converts, each audit database it scrubs and the shared database (a database converted later, at its
+  first use, is not, nor is the deletion-notice database: run `VACUUM` on them if the old copies must be gone).
+  Backups made by
   `bin/backup.js` still hold the tokens in clear (they restore on a core with another key): encrypt them. A
   PostgreSQL server that logs statement parameters (`log_statement = 'all'` or `'mod'`, with the default
   `log_parameter_max_length`) records in its log the clear tokens bound by the one-time conversion and by
@@ -114,12 +120,15 @@ roll back or change a key.
   consumed or read after its expiry.
 - **`bin/access-tokens.js status`** (read-only): counts of rows in clear, under the configured key, and under other
   keys, for tokens, sessions, access integrity values (`accessIntegrity`) and pending notice endpoints
-  (`deletionNotices`). `rekey` and `unprotect` cover them too.
+  (`deletionNotices`). `rekey` and `unprotect` cover them too. `rekey` goes on past an integrity value that does
+  not open under its previous key (damaged), names it (user id, access id) and exits 2: set that row's `integrity`
+  to NULL, core stopped, then start (the integrity check reports it as "missing integrity property"). A pending
+  deletion notice under a key `rekey` was not given is not refused at start: it is given up unsent.
 - **`bin/integrity-check.js`** reports an access whose stored token does not open (copied from a core with another
   key, or damaged) as an error of its user, "integrity not verifiable", and checks the others; API reads of that
   access still fail. An access whose stored integrity does not open (damaged, or copied from another account) is
   read without it and reported as "missing integrity property". On PostgreSQL the migrations of this release also
-  add five small indexes so the checks of every start read no whole table.
+  add small indexes so the checks of every start, and the token drop of each deletion, read no whole table.
 
 ### Operators (PostgreSQL): the unindexed-user guard locks per account instead of on the index row
 
