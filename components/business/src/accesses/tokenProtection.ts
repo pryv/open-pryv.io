@@ -21,11 +21,14 @@
  * human-made: a dump of plain hashes of those is reversed by enumeration. The
  * key lives in the configuration only, never in the database.
  *
- * Limit: the protection holds for server-generated tokens. While access
- * integrity is active, each access row also stores `integrity`, an unkeyed
- * hash of the access including its token, next to every other field it
- * covers: a low-entropy token chosen by a caller (or a short legacy one) can
- * still be tested offline against it from a dump.
+ * The engines never store the access `integrity` in clear either: that value
+ * is an unkeyed hash of the access including its token, so a dump of it would
+ * let a low-entropy token chosen by a caller (or a short legacy one) be tested
+ * offline. It is stored sealed, `sealed:<kid>.<envelope>` (the envelope bound
+ * to the user id), and opened on read; above the engines it is the public
+ * `ACCESS:0:...` value. The same sealed form keeps a credential sent to
+ * another platform (the endpoint of a pending deletion notice) out of the
+ * database in clear.
  *
  * Envelopes are version 2 only (context-bound); the openers refuse any other
  * version.
@@ -35,7 +38,7 @@
  *   2. else `auth.adminAccessKey`;
  *   3. else no key: refused (no unkeyed fallback, a process with another key
  *      would find no token at all).
- * Four keys are HKDF-derived from the root with their own labels. The `kid`
+ * Six keys are HKDF-derived from the root with their own labels. The `kid`
  * (first 8 hex chars of an HMAC under the access hash key) prefixes every
  * hash: rows under another key are recognised (boot guard, `rekey` tool).
  */
@@ -43,12 +46,15 @@
 import { createHmac } from 'node:crypto';
 import type { ConfigLike } from '@pryv/boiler';
 import type { TokenProtection } from 'storages/interfaces/_shared/tokenProtection.ts';
+import { SEALED_PREFIX, isSealedValue } from 'storages/interfaces/_shared/tokenProtection.ts';
 import { deriveKey, encrypt, decrypt, envelopeVersion, KEY_BYTES, ENVELOPE_VERSION } from '../acme/AtRestEncryption.ts';
 
 const PURPOSE_ACCESS_HASH = 'access-token-hash-v1';
 const PURPOSE_ACCESS_ENC = 'access-token-enc-v1';
 const PURPOSE_SESSION_HASH = 'session-id-hash-v1';
 const PURPOSE_SESSION_ENC = 'session-id-enc-v1';
+const PURPOSE_ACCESS_INTEGRITY_ENC = 'access-integrity-enc-v1';
+const PURPOSE_OUTBOUND_ENC = 'outbound-credential-enc-v1';
 const KID_LENGTH = 8;
 
 /** An envelope that does not open: tampered, or sealed under another key. */
@@ -87,11 +93,27 @@ function createTokenProtection (root: string | Buffer): TokenProtection {
   const accessEncKey = deriveKey(root, PURPOSE_ACCESS_ENC);
   const sessionHashKey = deriveKey(root, PURPOSE_SESSION_HASH);
   const sessionEncKey = deriveKey(root, PURPOSE_SESSION_ENC);
+  const integrityEncKey = deriveKey(root, PURPOSE_ACCESS_INTEGRITY_ENC);
+  const outboundEncKey = deriveKey(root, PURPOSE_OUTBOUND_ENC);
   const kid = createHmac('sha256', accessHashKey).update('kid').digest('hex').slice(0, KID_LENGTH);
   const prefix = kid + '.';
+  const sealedPrefix = SEALED_PREFIX + prefix;
 
   const accessContext = (userId: string, tokenHash: string): string => 'access-token:' + userId + ':' + tokenHash;
   const sessionContext = (idHash: string): string => 'session-id:' + idHash;
+  const integrityContext = (userId: string): string => 'access-integrity:' + userId;
+
+  /** `sealed:<kid>.<envelope>`: the key id is in the value (rows without a token hash carry it too). */
+  const seal = (value: string, key: Buffer, context: string): string => sealedPrefix + encrypt(value, key, context);
+  const open = (stored: string, key: Buffer, context: string, what: string): string => {
+    if (!isSealedValue(stored)) throw new TokenUnreadableError(what + ' is not a sealed value');
+    if (!stored.startsWith(sealedPrefix)) throw new TokenUnreadableError(what + ' is sealed under another key');
+    try {
+      return openV2(stored.slice(sealedPrefix.length), key, context);
+    } catch (err) {
+      throw new TokenUnreadableError(what + ' envelope does not open: ' + (err as Error).message);
+    }
+  };
 
   return {
     kid,
@@ -129,6 +151,30 @@ function createTokenProtection (root: string | Buffer): TokenProtection {
       } catch (err) {
         throw new TokenUnreadableError('session id envelope does not open: ' + (err as Error).message);
       }
+    },
+    isSealed (stored) {
+      return isSealedValue(stored);
+    },
+    ownsSealed (stored) {
+      return typeof stored === 'string' && stored.startsWith(sealedPrefix);
+    },
+    sealAccessIntegrity (userId, integrity) {
+      assertString(userId, 'user id');
+      assertString(integrity, 'access integrity');
+      return seal(integrity, integrityEncKey, integrityContext(userId));
+    },
+    openAccessIntegrity (userId, stored) {
+      assertString(userId, 'user id');
+      return open(stored, integrityEncKey, integrityContext(userId), 'access integrity');
+    },
+    sealSecret (context, value) {
+      assertString(context, 'context');
+      assertString(value, 'secret');
+      return seal(value, outboundEncKey, context);
+    },
+    openSecret (context, stored) {
+      assertString(context, 'context');
+      return open(stored, outboundEncKey, context, 'secret');
     }
   };
 }
