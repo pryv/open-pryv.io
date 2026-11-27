@@ -110,7 +110,7 @@
   id and sorted them on every data set tried (vacuumed 1 M records: 240 ms for a page of 20 next to a dense id);
   with it, `Limit > Nested Loop > Unique > Merge Append > N x Index Only Scan` on the primary key, no sort. The plan
   still follows the statistics (it cannot be forced from a production statement): on a table never vacuumed (a
-  fresh fill, before autovacuum's first pass) or one an account fills, the planner sorts a dense id's keys
+  fresh fill without the closing `VACUUM` of the last bullet, before autovacuum's first pass) or one an account fills, the planner sorts a dense id's keys
   (bitmap or sequential scan, then sort), and a deeper `OFFSET` or no limit can flip it to `Append + Sort`. Bounded
   by the named ids' keys, never the LIKE walk of the trail: measured 0.25 to 0.4 s for a page of 20 next to an id
   holding 120 000 keys, where the plain statement takes 4 ms. A vacuumed table, including one with 20 % of its rows
@@ -142,6 +142,20 @@
   from a branch (`[PGASN]` text, `[PGASP]`); the branch `ORDER BY` removed (`[PGASP]`); the outer order reversed
   (`[PGASO]`, `[PGASQ]`); `OFFSET 0` removed, the deny guard removed, the id cap removed, one covered id accepted
   as enough (`[PGASN]`).
+- A fill that did work (from zero, or a resumed run that read records) ends with `VACUUM (ANALYZE)
+  audit_event_streams` on its dedicated connection, after the batch loop and before the final trigger check and the
+  completion, so readers switch to the table once it has statistics and a visibility map (`ANALYZE` alone left the
+  planner sorting a dense id's keys). Best effort: a failure is logged at warn and the fill completes. It takes
+  SHARE UPDATE EXCLUSIVE (no read or write of the table waits). Measured on mbp2 (the recipe above, 1 010 500 rows,
+  129 MB heap, autovacuum off on the table): 478 ms idle, 552 ms with a writer at 200 records/s during the fill; the
+  visibility map 100 % afterwards; then the page of 20 next to the dense id is the Merge Append (0.4 to 0.6 ms,
+  where the never-vacuumed table measured 0.25 to 0.4 s). `[PGASR]`: the VACUUM runs once, before the completion,
+  after a fill from zero (`relallvisible > 0`, `reltuples` set); a VACUUM made to fail is warned and the fill
+  completes exact; a complete state and a resumed run with nothing to read run none. Mutations: the VACUUM
+  removed, run unconditionally, or replaced by `ANALYZE` (with the test relaxed to that statement:
+  `relallvisible` stays 0) each fail `[PGASR]`.
+- Review follow-ups: the cap's literal 500 pinned in `[PGASN]`; `[PGASM]` also records the untimed-record decision
+  for several ids; `[ASFLA]` asserts the plain pass never reads `audit_event_streams` (and passes run alone).
 
 ### SQLite: a deep page of a stream most events hold no longer reads every one of them
 

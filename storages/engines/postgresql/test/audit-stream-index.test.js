@@ -896,4 +896,76 @@ describe('[PGAS] PostgreSQL audit records indexed by access', function () {
       }
     }
   });
+
+  // The fill's database, recording the statements of its connection; a VACUUM
+  // fails on purpose when asked.
+  function recordingDb (statements, { failVacuum = false } = {}) {
+    return {
+      connectDedicated: async (name) => {
+        const client = await db.connectDedicated(name);
+        return {
+          query: (sql, params) => {
+            statements.push(sql);
+            if (failVacuum && sql.startsWith('VACUUM')) return Promise.reject(new Error('vacuum refused on purpose'));
+            return client.query(sql, params);
+          },
+          end: () => client.end()
+        };
+      }
+    };
+  }
+
+  it('[PGASR] a fill that did work ends with a VACUUM (ANALYZE) of the table; one whose VACUUM fails still completes; a complete state runs none', async function () {
+    const u = newUser();
+    await db.query(
+      'INSERT INTO audit_events (user_id, eventid, stream_ids, type, time, created, modified, trashed) ' +
+      'SELECT $1, \'v\' || lpad(i::text, 5, \'0\'), \'access-\' || (i % 3) || \' action-y ..\', \'audit-log/pryv-api\', 1000 + i, 1000 + i, 1000 + i, false ' +
+      'FROM generate_series(1, 3000) AS i', [u]);
+    const isVacuum = (sql) => sql === 'VACUUM (ANALYZE) audit_event_streams';
+    const logs = [];
+    const logger = { info: (m) => logs.push('info ' + m), warn: (m) => logs.push('warn ' + m) };
+
+    // From zero: the TRUNCATE leaves the table with no visibility map; the
+    // VACUUM runs once, before the state says complete.
+    await resetState();
+    const statements = [];
+    const res = await ensureAuditStreamIndex(recordingDb(statements), { logger, batchRows: 1000 });
+    assert.strictEqual(res.fromZero, true);
+    assert.strictEqual(statements.filter(isVacuum).length, 1, JSON.stringify(statements));
+    const completion = statements.findIndex((sql) => sql.includes('SET complete = true'));
+    assert.ok(completion > statements.findIndex(isVacuum), 'vacuumed before the completion');
+    const stats = (await db.query('SELECT relallvisible, reltuples FROM pg_class WHERE oid = \'audit_event_streams\'::regclass')).rows[0];
+    assert.ok(stats.relallvisible > 0, 'visibility map set: ' + JSON.stringify(stats));
+    assert.ok(stats.reltuples >= 3000, 'statistics set: ' + JSON.stringify(stats));
+    assert.ok(logs.some((l) => l.startsWith('info audit stream index: VACUUM (ANALYZE) audit_event_streams in ')), JSON.stringify(logs));
+
+    // A VACUUM that fails: warned, and the fill completes all the same.
+    await resetState();
+    logs.length = 0;
+    const failing = [];
+    const res2 = await ensureAuditStreamIndex(recordingDb(failing, { failVacuum: true }), { logger, batchRows: 1000 });
+    assert.strictEqual(res2.fromZero, true);
+    assert.strictEqual(failing.filter(isVacuum).length, 1);
+    assert.ok(logs.some((l) => l.startsWith('warn audit stream index: VACUUM (ANALYZE) audit_event_streams failed (vacuum refused on purpose)')), JSON.stringify(logs));
+    assert.deepStrictEqual(await state(), { complete: true, cursor_user_id: null, cursor_eventid: null });
+    assert.deepStrictEqual(await drift(), { missing: 0, extra: 0 });
+    assert.strictEqual((await junction(u)).length, 3000);
+
+    // Complete already: no VACUUM (every later start, and this suite's afterEach).
+    const later = [];
+    const res3 = await ensureAuditStreamIndex(recordingDb(later), { logger });
+    assert.strictEqual(res3.alreadyComplete, true);
+    assert.strictEqual(later.filter(isVacuum).length, 0, JSON.stringify(later));
+
+    // A resumed run with nothing left to read did no work: no VACUUM either.
+    const last = (await db.query('SELECT user_id, eventid FROM audit_events ORDER BY user_id DESC, eventid DESC LIMIT 1')).rows[0];
+    await db.query('UPDATE audit_event_streams_state SET complete = false, cursor_user_id = $1, cursor_eventid = $2, updated_at = now()',
+      [last.user_id, last.eventid]);
+    const idle = [];
+    const res4 = await ensureAuditStreamIndex(recordingDb(idle), { logger });
+    assert.strictEqual(res4.fromZero, false);
+    assert.strictEqual(res4.rows, 0);
+    assert.strictEqual(idle.filter(isVacuum).length, 0, JSON.stringify(idle));
+    assert.strictEqual((await state()).complete, true);
+  });
 });

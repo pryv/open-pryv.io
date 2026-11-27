@@ -44,6 +44,7 @@
  * polling): a run starting from zero empties the table first, then walks
  * `audit_events` by primary key in batches, one transaction each, recording
  * its position in the state row, so a stopped run resumes where it was. A
+ * run that did work ends with a `VACUUM (ANALYZE)` of the table. A
  * fill refuses to run, and resets the state, while a trigger does not fire.
  * Its state updates are compare-and-set: a reset made meanwhile by another
  * process (its install found a trigger missing) makes the fill start again
@@ -368,6 +369,28 @@ async function truncateTable (client: StreamIndexClient, log: StreamIndexLog): P
   }
 }
 
+/**
+ * `VACUUM (ANALYZE)` of the table a fill just wrote. Until a first vacuum the
+ * planner has no visibility map for it and may sort the rows of a dense
+ * access instead of merging the ranges of several accesses; statistics alone
+ * do not change that. Done before the state says complete, so readers switch
+ * to the table once its statistics exist. Best effort: on failure the reads
+ * stay exact and only their plan may be slower until autovacuum passes. It
+ * takes SHARE UPDATE EXCLUSIVE, which blocks no read or write of the table.
+ * The fill's connection is outside any transaction here (each batch is
+ * committed) and has no statement or lock time limit.
+ */
+async function vacuumTable (client: StreamIndexClient, log: StreamIndexLog): Promise<void> {
+  const t0 = Date.now();
+  try {
+    await client.query('VACUUM (ANALYZE) audit_event_streams');
+    log.info?.(`audit stream index: VACUUM (ANALYZE) audit_event_streams in ${Date.now() - t0} ms`);
+  } catch (err: unknown) {
+    log.warn?.(`audit stream index: VACUUM (ANALYZE) audit_event_streams failed (${(err as Error)?.message}); ` +
+      'reads of several accesses\' audit trails may use a slower plan until autovacuum passes');
+  }
+}
+
 async function fillLocked (client: StreamIndexClient, log: StreamIndexLog, options: FillOptions): Promise<FillResult> {
   const present = await client.query('SELECT to_regclass(\'audit_event_streams_state\') IS NOT NULL AS present');
   if (present.rows[0]?.present !== true) {
@@ -470,6 +493,7 @@ async function fillRun (client: StreamIndexClient, log: StreamIndexLog, options:
     }
     if (read < batchRows) break;
   }
+  if (fromZero || rows > 0) await vacuumTable(client, log);
   // Complete only with both triggers firing: a trigger that stopped during the
   // run missed writes behind the position, and without it a record written
   // or deleted from now on would be missed too; readers would hide them.
