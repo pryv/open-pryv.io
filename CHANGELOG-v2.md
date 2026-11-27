@@ -13,6 +13,16 @@
   events whose streams are each readable to the access or covered by none of its grants.
 - `events.update`, `events.delete` and `events.deleteAttachment` on the id of a deleted event now answer
   `404 unknown-resource` (they could fail with an internal error).
+- For an app or shared access, `events.update`, `events.delete` and `events.deleteAttachment` on an event of the
+  CMC plugin-internal subtree now answer `404 unknown-resource`, as `events.getOne` does (was `403` with
+  `cmc-protected-event-write`). Events such an access can see (the CMC inbox, a group's member records) keep the
+  `403 cmc-protected-event-write` refusal.
+- `events.deleteAttachment` now applies the refusals of `events.delete`: an attachment of a CMC inbox, internal or
+  member-record event cannot be removed by an app or shared access (`cmc-protected-event-write`), nor one of an
+  emails container item (`emails-reserved-stream`, personal token included), an account event or an
+  account-delegation event; a shared-secret item cannot be modified (`shared-secret-immutable`).
+- Forced streams (accesses migrated from v1) are judged in every store an event's streams belong to, not only the
+  store of its first stream, on reads and writes alike.
 - Unchanged, by design: a producer holding `create-only` or `contribute` on one of a series event's streams may still
   append HF points to it even when it cannot read the event (no event content is returned); and `streams.delete`,
   which requires `manage` on the whole deleted subtree, still removes those streams from (or merges into the parent)

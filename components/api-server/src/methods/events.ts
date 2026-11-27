@@ -1460,10 +1460,20 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     return attachments.reduce((evtTotal: number, att) => evtTotal + (att.size ?? 0), 0);
   }
 
+  // Removing an attachment changes the event: it passes the refusals of
+  // events.delete (CMC inbox / internal / member records, emails container,
+  // account events, delegation namespace). For shared-secret items, whose
+  // delete guard is a lifecycle transition rather than a refusal, the update
+  // guard applies: an item cannot be modified.
   api.register(
     'events.deleteAttachment',
     commonFns.getParamsValidation(methodsSchema.deleteAttachment.params),
     checkEventForDelete,
+    cmcEventDeleteGuard,
+    sharedSecretsUpdateGuard,
+    emailsDeleteGuard,
+    blockAccountEventDeletion,
+    delegationEventsDeleteGuardHook,
     deleteAttachment
   );
 
@@ -1497,13 +1507,19 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   /**
    * The refusal for a write by id (events.update, events.delete,
    * events.deleteAttachment) on a stored event, before any permission rule:
-   * a deletion record (it keeps no streams) is unknown, and an event hidden
-   * from the access (a stream withholds reading, or it is outside the
+   * a deletion record (it keeps no streams) is unknown; for an app or shared
+   * access, an event under the CMC plugin-internal subtree is unknown too, as
+   * events.getOne answers it (its write guard keeps its own refusal for the
+   * events such an access can see: the inbox, member records); and an event
+   * hidden from the access (a stream withholds reading, or it is outside the
    * access's forced streams) is refused as events.getOne refuses it, whatever
    * its other streams grant. Null when the write goes on to its own checks.
    */
   async function refusalForWriteById (context: MethodContext, event: { streamIds?: string[] | null }, id: string) {
     if (!Array.isArray(event.streamIds)) return errors.unknownResource('event', id);
+    if (!context.access.isPersonal() && event.streamIds.some((s: string) => cmc.isCmcInternalStreamId(s))) {
+      return errors.unknownResource('event', id);
+    }
     if (await isEventHiddenByGrants(context.access, event.streamIds)) return errors.forbidden();
     return null;
   }

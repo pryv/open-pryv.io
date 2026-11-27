@@ -150,6 +150,15 @@ describe('[SRDX] single-event reads apply the events.get exclusions', function (
     const res = await getOne(ev.id, readAToken);
     assert.strictEqual(res.status, 200, JSON.stringify(res.body));
   });
+
+  it('[SRD7] events.deleteAttachment on an emails container item is refused, personal token included', async function () {
+    const res = await coreRequest.delete('/' + username + '/events/' + emailFile.eventId + '/' + emailFile.fileId)
+      .set('Authorization', personal);
+    assert.strictEqual(res.status, 403, JSON.stringify(res.body));
+    assert.strictEqual(res.body.error?.data?.id, 'emails-reserved-stream', JSON.stringify(res.body));
+    const stored = await mall.events.getOne(userId, emailFile.eventId);
+    assert.deepStrictEqual(stored.attachments.map((a) => a.id), [emailFile.fileId]);
+  });
 });
 
 /**
@@ -605,6 +614,50 @@ describe('[SRCU] CMC protections on events.update and internal writes', function
     const res = await create(appToken, { streamIds: [responsesStreamId], type: 'note/txt', content: 'forged' });
     assert.strictEqual(res.status, 403, JSON.stringify(res.body));
     assert.strictEqual(res.body.error.data?.id, PROTECTED);
+  });
+
+  it('[SRC7] an inbox event carries an attachment (personal update); an app token cannot remove it, the personal token can', async function () {
+    const genuine = await mall.events.create(userId, {
+      streamIds: [INBOX], type: 'consent/request-cmc', content: requestContent('https://requester.example.com/cap')
+    });
+    const added = await coreRequest.post(eventsPath() + '/' + genuine.id).set('Authorization', personal)
+      .attach('file', Buffer.from('inbox file'), { filename: 'inbox.txt', contentType: 'text/plain' });
+    assert.strictEqual(added.status, 200, JSON.stringify(added.body));
+    const fileId = added.body.event.attachments[0].id;
+    const path = eventsPath() + '/' + genuine.id + '/' + fileId;
+    const refused = await coreRequest.delete(path).set('Authorization', appToken);
+    assert.strictEqual(refused.status, 403, JSON.stringify(refused.body));
+    assert.strictEqual(refused.body.error?.data?.id, PROTECTED);
+    assert.deepStrictEqual((await mall.events.getOne(userId, genuine.id)).attachments.map((a) => a.id), [fileId]);
+    const own = await coreRequest.delete(path).set('Authorization', personal);
+    assert.strictEqual(own.status, 200, JSON.stringify(own.body));
+  });
+
+  it('[SRC8] update and delete answer unknown-resource for a plugin-internal event, as getOne does; the inbox keeps its refusal', async function () {
+    const internal = await mall.events.create(userId, { streamIds: [responsesStreamId], type: 'note/txt', content: 'internal' });
+    for (const token of [appToken, capabilityToken]) {
+      const calls = [
+        coreRequest.get(eventsPath() + '/' + internal.id).set('Authorization', token),
+        coreRequest.put(eventsPath() + '/' + internal.id).set('Authorization', token).send({ content: 'changed' }),
+        coreRequest.delete(eventsPath() + '/' + internal.id).set('Authorization', token)
+      ];
+      for (const res of await Promise.all(calls)) {
+        assert.strictEqual(res.status, 404, JSON.stringify(res.body));
+        assert.strictEqual(res.body.error?.id, 'unknown-resource', JSON.stringify(res.body));
+      }
+    }
+    const stored = await mall.events.getOne(userId, internal.id);
+    assert.strictEqual(stored.content, 'internal');
+    assert.ok(!stored.trashed, 'not trashed');
+    // the inbox is visible to the app token: its refusal keeps the CMC id
+    const inbox = await mall.events.create(userId, {
+      streamIds: [INBOX], type: 'consent/request-cmc', content: requestContent('https://requester.example.com/cap')
+    });
+    const read = await coreRequest.get(eventsPath() + '/' + inbox.id).set('Authorization', appToken);
+    assert.strictEqual(read.status, 200, JSON.stringify(read.body));
+    const del = await coreRequest.delete(eventsPath() + '/' + inbox.id).set('Authorization', appToken);
+    assert.strictEqual(del.status, 403, JSON.stringify(del.body));
+    assert.strictEqual(del.body.error?.data?.id, PROTECTED);
   });
 
   it('[SRC6] a capability access writes only into its own responses stream', async function () {

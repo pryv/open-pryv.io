@@ -80,24 +80,32 @@ async function isEventHiddenByGrants (
 
 /**
  * Whether an access carrying forced streams (accesses migrated from v1 tag
- * permissions) is kept away from an event that is not within each of them.
- * False when the access has none.
+ * permissions) is kept away from an event: for each store the event's
+ * streams belong to, the event must be within each forced stream of that
+ * store, through one of its streams in that store. False when the access has
+ * none.
  */
 async function isOutsideForcedStreams (
   access: Pick<CanReadEventAccess, 'getForcedStreamsGetEventsStreamIds' | 'isStreamWithin'>,
   streamIds: readonly string[]
 ): Promise<boolean> {
-  if (streamIds.length === 0) return false;
-  const [storeId] = storeDataUtils.parseStoreIdAndStoreItemId(streamIds[0]);
-  const forced = access.getForcedStreamsGetEventsStreamIds(storeId);
-  if (forced == null || forced.length === 0) return false;
-  const inStoreIds = streamIds.map((id) => storeDataUtils.parseStoreIdAndStoreItemId(id)[1]);
-  for (const forcedId of forced) {
-    let within = false;
-    for (const id of inStoreIds) {
-      if (await access.isStreamWithin(storeId, id, forcedId)) { within = true; break; }
+  const inStoreIdsByStore = new Map<string, string[]>();
+  for (const id of streamIds) {
+    const [storeId, inStoreId] = storeDataUtils.parseStoreIdAndStoreItemId(id);
+    const list = inStoreIdsByStore.get(storeId);
+    if (list == null) inStoreIdsByStore.set(storeId, [inStoreId]);
+    else list.push(inStoreId);
+  }
+  for (const [storeId, inStoreIds] of inStoreIdsByStore) {
+    const forced = access.getForcedStreamsGetEventsStreamIds(storeId);
+    if (forced == null || forced.length === 0) continue;
+    for (const forcedId of forced) {
+      let within = false;
+      for (const id of inStoreIds) {
+        if (await access.isStreamWithin(storeId, id, forcedId)) { within = true; break; }
+      }
+      if (!within) return true;
     }
-    if (!within) return true;
   }
   return false;
 }
