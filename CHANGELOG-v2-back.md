@@ -13,46 +13,6 @@
   Bump policy and history: `storages/interfaces/README.md`. `storages/README.md` rewritten from the loader (it named
   factories, files and config keys that no longer exist). Tests `[IFVA]` to `[IFVH]`.
 
-### Platform setup and administrators: internals
-
-- `components/business/src/admin/`: `permissions.ts` (the permission names, a public contract), `codes.ts`
-  (Crockford base32 codes, base64url tokens, SHA-256 keys, constant-time comparison), `store.ts` (the platform-store
-  keys), `setupState.ts`, `sessions.ts`, `roles.ts` (role rows, claim codes, the last-owner guard
-  `LastOwnerError`), `config.ts` (validation and derived URLs; the portal address comes from `portalDefaults.ts`),
-  `setupBoot.ts` (the master boot step), `setupChecks.ts` (the checks of the setup page), `capabilities.ts`.
-- Platform store: `PlatformDB.setPlatformKvIfAbsent` (first writer wins) on rqlite (`INSERT OR IGNORE`) and
-  PostgreSQL (`ON CONFLICT DO NOTHING`), and `PlatformDB.replacePlatformKvIfValue` (compare-and-set, or delete when
-  `next` is null: `UPDATE` / `DELETE .. WHERE key = ? AND value = ?`, `rows_affected` / `rowCount`). Every write of
-  `setup/state` and `admin-role/` rows goes through `admin/store.ts updatePlatformKv` (compare-and-set, retried), so
-  a `ready` state never goes back to `pending` and concurrent role writes all land; a revocation that leaves no
-  lasting owner because of a racing one is undone (both fail). Conformance `[PLKV13]`, `[PLKV14]`, `[ADKC]` (both
-  engines, `[ADKC17]`, `[ADKC18]` for the races), `[MPKV]`.
-- `bin/migrate-platform.js` carries `setup/state` and `admin-role/`, and copies the TTL rows of codes and sessions
-  like every other row (hashes only: no secret moves; a live code or session stays valid on the new engine).
-- `mfa.verify` stamps the second factor of a sign-in in the home core's local key-value store, one entry per
-  account (`admin-mfa-sign-in/<userId>` holding the SHA-256 of the released token, TTL `admin.session.ttlMinutes`):
-  the personal access does not record it.
-- A new role row carries `sessionsRevokedAt` (sessions left from an earlier, deleted row stay refused); renewal
-  reads then rewrites the session row (no window where it is missing); a step-up stamp up to 60 s ahead of the
-  core's clock is accepted. Account deletion: the deletion guard `admin-last-owner` and the teardown step
-  `admin-role` (role row deleted, `force`), registered by `methods/systemAdmin.ts`.
-- `middleware/src/isAdminKey.ts isAdminKeyInFullScope`: the admin key outside `/system` (account deletion,
-  `/reg/records`, `/reg/admin/*`), refused under `break-glass`; the gate refuses the key on an unlisted `/system` path
-  under `break-glass`. The own origins of the setup page include the request's host under both schemes.
-- `middleware/src/adminAuth.ts`: the `/system` gate (admin key, administrator session, setup session) reading
-  `api-server/src/routes/system-permissions.ts` (one entry per route; `[SYPM]` fails on a route without one), the
-  origin rule, and the `ownCors` branch of `commonHeaders` for portal calls. `routes/system-setup.ts` +
-  `methods/systemAdmin.ts`: the routes; `routes/setup-page/`: the static setup page.
-- `auth.login`: the trusted-app check also passes for the setup page (app id `pryv-setup-page`, own origin, valid
-  setup session, setup pending); `auth.register` refuses while setup is pending unless a setup session is sent or
-  `setup.registrationWhilePending: open`.
-- `bin/master.js` runs the setup step in the master process; `bin/admin.js` is new; `bin/check-config.js` checks the
-  new keys; `bin/init.js` writes `setup.codeHash` and mirrors the keys in its appendix.
-- Tests: `[ADMS]` (routes, page, checks, setup-page sign-in, admin-key finish, app tokens refused, regrant,
-  account deletion), `[SYPM]` (with `[SYPM5]`, break-glass outside `/system`), `[ADMC]` (`bin/admin.js`),
-  `[ADKC16]` (last-owner guard), `[ADAU11]`, `[ADAU12]`, `[INWPL]`, `[INWPM]`, plus the business and middleware
-  units.
-
 ### MFA: strict session kind in `mfa.confirm` and `mfa.verify`
 
 - `api-server/src/methods/mfa.ts`: `mfa.confirm` accepts an enrolment session only and `mfa.verify` a login session
@@ -168,6 +128,46 @@
   delegation on the core, transfers are not offered.
 - The shared ends of a transfer (completed, lapsed, cancelled / declined) live in
   `business/src/autoDeletion/transferFlow.ts`, used by the sweep and by the claim / decline methods.
+
+### Platform setup and administrators: internals
+
+- `components/business/src/admin/`: `permissions.ts` (the permission names, a public contract), `codes.ts`
+  (Crockford base32 codes, base64url tokens, SHA-256 keys, constant-time comparison), `store.ts` (the platform-store
+  keys), `setupState.ts`, `sessions.ts`, `roles.ts` (role rows, claim codes, the last-owner guard
+  `LastOwnerError`), `config.ts` (validation and derived URLs; the portal address comes from `portalDefaults.ts`),
+  `setupBoot.ts` (the master boot step), `setupChecks.ts` (the checks of the setup page), `capabilities.ts`.
+- Platform store: `PlatformDB.setPlatformKvIfAbsent` (first writer wins) on rqlite (`INSERT OR IGNORE`) and
+  PostgreSQL (`ON CONFLICT DO NOTHING`), and `PlatformDB.replacePlatformKvIfValue` (compare-and-set, or delete when
+  `next` is null: `UPDATE` / `DELETE .. WHERE key = ? AND value = ?`, `rows_affected` / `rowCount`). Every write of
+  `setup/state` and `admin-role/` rows goes through `admin/store.ts updatePlatformKv` (compare-and-set, retried), so
+  a `ready` state never goes back to `pending` and concurrent role writes all land; a revocation that leaves no
+  lasting owner because of a racing one is undone (both fail). Conformance `[PLKV13]`, `[PLKV14]`, `[ADKC]` (both
+  engines, `[ADKC17]`, `[ADKC18]` for the races), `[MPKV]`.
+- `bin/migrate-platform.js` carries `setup/state` and `admin-role/`, and copies the TTL rows of codes and sessions
+  like every other row (hashes only: no secret moves; a live code or session stays valid on the new engine).
+- `mfa.verify` stamps the second factor of a sign-in in the home core's local key-value store, one entry per
+  account (`admin-mfa-sign-in/<userId>` holding the SHA-256 of the released token, TTL `admin.session.ttlMinutes`):
+  the personal access does not record it.
+- A new role row carries `sessionsRevokedAt` (sessions left from an earlier, deleted row stay refused); renewal
+  reads then rewrites the session row (no window where it is missing); a step-up stamp up to 60 s ahead of the
+  core's clock is accepted. Account deletion: the deletion guard `admin-last-owner` and the teardown step
+  `admin-role` (role row deleted, `force`), registered by `methods/systemAdmin.ts`.
+- `middleware/src/isAdminKey.ts isAdminKeyInFullScope`: the admin key outside `/system` (account deletion,
+  `/reg/records`, `/reg/admin/*`), refused under `break-glass`; the gate refuses the key on an unlisted `/system` path
+  under `break-glass`. The own origins of the setup page include the request's host under both schemes.
+- `middleware/src/adminAuth.ts`: the `/system` gate (admin key, administrator session, setup session) reading
+  `api-server/src/routes/system-permissions.ts` (one entry per route; `[SYPM]` fails on a route without one), the
+  origin rule, and the `ownCors` branch of `commonHeaders` for portal calls. `routes/system-setup.ts` +
+  `methods/systemAdmin.ts`: the routes; `routes/setup-page/`: the static setup page.
+- `auth.login`: the trusted-app check also passes for the setup page (app id `pryv-setup-page`, own origin, valid
+  setup session, setup pending); `auth.register` refuses while setup is pending unless a setup session is sent or
+  `setup.registrationWhilePending: open`.
+- `bin/master.js` runs the setup step in the master process; `bin/admin.js` is new; `bin/check-config.js` checks the
+  new keys; `bin/init.js` writes `setup.codeHash` and mirrors the keys in its appendix.
+- Tests: `[ADMS]` (routes, page, checks, setup-page sign-in, admin-key finish, app tokens refused, regrant,
+  account deletion), `[SYPM]` (with `[SYPM5]`, break-glass outside `/system`), `[ADMC]` (`bin/admin.js`),
+  `[ADKC16]` (last-owner guard), `[ADAU11]`, `[ADAU12]`, `[INWPL]`, `[INWPM]`, plus the business and middleware
+  units.
 
 ## 2.0.0-rc.90 - 2026-11-26
 
