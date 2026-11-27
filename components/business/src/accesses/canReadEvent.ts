@@ -52,20 +52,7 @@ async function canReadEvent (access: CanReadEventAccess, event: EventLike): Prom
   for (const streamId of streamIds) {
     if (isEmailsStream(streamId) || isPluginInternalStream(streamId)) return false;
   }
-  if (await hasStreamForbiddenForReading(access, streamIds)) return false;
-
-  const [storeId] = storeDataUtils.parseStoreIdAndStoreItemId(streamIds[0]);
-  const forced = access.getForcedStreamsGetEventsStreamIds(storeId);
-  if (forced != null && forced.length > 0) {
-    const inStoreIds = streamIds.map((id) => storeDataUtils.parseStoreIdAndStoreItemId(id)[1]);
-    for (const forcedId of forced) {
-      let within = false;
-      for (const id of inStoreIds) {
-        if (await access.isStreamWithin(storeId, id, forcedId)) { within = true; break; }
-      }
-      if (!within) return false;
-    }
-  }
+  if (await isEventHiddenByGrants(access, streamIds)) return false;
 
   for (const streamId of streamIds) {
     if (await access.canGetEventsOnStream(streamId, 'local')) return true;
@@ -74,12 +61,48 @@ async function canReadEvent (access: CanReadEventAccess, event: EventLike): Prom
 }
 
 /**
+ * Whether the access's grants hide an event with these streams, whatever its
+ * other streams grant: a stream withholds reading (`none` / `create-only`), or
+ * the access carries forced streams and the event is outside one of them.
+ * The write methods (events.update, events.delete, events.deleteAttachment)
+ * refuse such an event the way events.getOne does, so an access cannot read,
+ * change or delete by id an event it cannot read. Always false for a
+ * personal access.
+ */
+async function isEventHiddenByGrants (access: CanReadEventAccess, streamIds: readonly string[]): Promise<boolean> {
+  if (access.isPersonal()) return false;
+  if (await hasStreamForbiddenForReading(access, streamIds)) return true;
+  return await isOutsideForcedStreams(access, streamIds);
+}
+
+/**
+ * Whether an access carrying forced streams (accesses migrated from v1 tag
+ * permissions) is kept away from an event that is not within each of them.
+ * False when the access has none.
+ */
+async function isOutsideForcedStreams (
+  access: Pick<CanReadEventAccess, 'getForcedStreamsGetEventsStreamIds' | 'isStreamWithin'>,
+  streamIds: readonly string[]
+): Promise<boolean> {
+  if (streamIds.length === 0) return false;
+  const [storeId] = storeDataUtils.parseStoreIdAndStoreItemId(streamIds[0]);
+  const forced = access.getForcedStreamsGetEventsStreamIds(storeId);
+  if (forced == null || forced.length === 0) return false;
+  const inStoreIds = streamIds.map((id) => storeDataUtils.parseStoreIdAndStoreItemId(id)[1]);
+  for (const forcedId of forced) {
+    let within = false;
+    for (const id of inStoreIds) {
+      if (await access.isStreamWithin(storeId, id, forcedId)) { within = true; break; }
+    }
+    if (!within) return true;
+  }
+  return false;
+}
+
+/**
  * Whether any of the given streams is governed by a grant that withholds
- * reading (`none` / `create-only`, own or inherited). Such an event is hidden
- * from the access whatever its other streams grant, and the write methods
- * (events.update, events.delete, events.deleteAttachment) refuse it the same
- * way, so an access cannot read, change or delete by id an event it cannot
- * read. Always false for a personal access.
+ * reading (`none` / `create-only`, own or inherited). Always false for a
+ * personal access.
  */
 async function hasStreamForbiddenForReading (
   access: Pick<CanReadEventAccess, 'isStreamForbiddenForReading'>,
@@ -100,5 +123,5 @@ function isStreamOutOfNonPersonalReach (streamId: string): boolean {
   return isEmailsStream(streamId) || isPluginInternalStream(streamId);
 }
 
-export { canReadEvent, hasStreamForbiddenForReading, isStreamOutOfNonPersonalReach };
+export { canReadEvent, isEventHiddenByGrants, hasStreamForbiddenForReading, isStreamOutOfNonPersonalReach };
 export default canReadEvent;

@@ -299,6 +299,117 @@ describe('[WRHD] write methods refuse an event the access cannot read', function
   });
 });
 
+/**
+ * Accesses migrated from v1 tag permissions carry forced streams: events.get
+ * and events.getOne hide an event outside them, and the write methods by id
+ * refuse it the same way. (Such a permission cannot be written through the
+ * API: the fixture stores it directly, as the migration did.)
+ */
+describe('[WRFD] write methods refuse an event outside the forced streams', function () {
+  this.timeout(60_000);
+
+  const ErrorIds = require('errors').ErrorIds;
+  let fixtures, username, personal, forcedToken;
+
+  before(async function () {
+    await initTests();
+    await initCore();
+    fixtures = getNewFixture();
+    username = 'wrfd' + cuid().toLowerCase().slice(-10);
+    personal = cuid();
+    forcedToken = cuid();
+    const user = await fixtures.user(username);
+    await user.access({ token: personal, type: 'personal' });
+    await user.session(personal);
+    await user.stream({ id: 'wrfd-a', name: 'A' });
+    await user.stream({ id: 'wrfd-forced', name: 'forced' });
+    await user.access({
+      token: forcedToken,
+      type: 'app',
+      permissions: [
+        { streamId: 'wrfd-a', level: 'contribute' },
+        { streamId: 'wrfd-forced', level: 'contribute' },
+        { feature: 'forcedStreams', streams: ['wrfd-forced'] }
+      ]
+    });
+  });
+
+  after(async function () {
+    if (fixtures != null) {
+      try { await fixtures.clean(); } catch (_e) { /* best-effort */ }
+    }
+  });
+
+  function eventPath (id) { return '/' + username + '/events/' + id; }
+  async function create (streamIds) {
+    const res = await coreRequest.post('/' + username + '/events').set('Authorization', personal)
+      .send({ streamIds, type: 'note/txt', content: 'original' });
+    assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+    return res.body.event;
+  }
+  async function createOutsideWithFile () {
+    const res = await coreRequest.post('/' + username + '/events').set('Authorization', personal)
+      .field('event', JSON.stringify({ streamIds: ['wrfd-a'], type: 'file/attached' }))
+      .attach('file', Buffer.from('outside file'), { filename: 'outside.txt', contentType: 'text/plain' });
+    assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+    return res.body.event;
+  }
+  async function storedEvent (id) {
+    const res = await coreRequest.get(eventPath(id)).set('Authorization', personal);
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    return res.body.event;
+  }
+  function assertForbidden (res) {
+    assert.strictEqual(res.status, 403, JSON.stringify(res.body));
+    assert.strictEqual(res.body.error?.id, ErrorIds.Forbidden, JSON.stringify(res.body));
+    assert.strictEqual(res.body.event, undefined, 'no event in the refusal');
+  }
+
+  it('[WRF1] premise: events.getOne refuses an event outside the forced stream and returns one inside it', async function () {
+    const outside = await create(['wrfd-a']);
+    assertForbidden(await coreRequest.get(eventPath(outside.id)).set('Authorization', forcedToken));
+    const inside = await create(['wrfd-a', 'wrfd-forced']);
+    const res = await coreRequest.get(eventPath(inside.id)).set('Authorization', forcedToken);
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+  });
+
+  it('[WRF2] an update (empty or with content) of an event outside the forced stream is refused, the event unchanged', async function () {
+    const ev = await create(['wrfd-a']);
+    assertForbidden(await coreRequest.put(eventPath(ev.id)).set('Authorization', forcedToken).send({}));
+    assertForbidden(await coreRequest.put(eventPath(ev.id)).set('Authorization', forcedToken).send({ content: 'changed' }));
+    const stored = await storedEvent(ev.id);
+    assert.strictEqual(stored.content, 'original');
+    assert.strictEqual(stored.modified, ev.modified);
+  });
+
+  it('[WRF3] delete of an event outside the forced stream is refused; neither trashed nor, once trashed, deleted', async function () {
+    const ev = await create(['wrfd-a']);
+    assertForbidden(await coreRequest.delete(eventPath(ev.id)).set('Authorization', forcedToken));
+    assert.ok(!(await storedEvent(ev.id)).trashed, 'not trashed');
+    const trash = await coreRequest.delete(eventPath(ev.id)).set('Authorization', personal);
+    assert.strictEqual(trash.status, 200, JSON.stringify(trash.body));
+    assertForbidden(await coreRequest.delete(eventPath(ev.id)).set('Authorization', forcedToken));
+    assert.strictEqual((await storedEvent(ev.id)).trashed, true, 'still there, trashed');
+  });
+
+  it('[WRF4] deleteAttachment on an event outside the forced stream is refused and the attachment stays', async function () {
+    const ev = await createOutsideWithFile();
+    const fileId = ev.attachments[0].id;
+    assertForbidden(await coreRequest.delete(eventPath(ev.id) + '/' + fileId).set('Authorization', forcedToken));
+    assert.deepStrictEqual((await storedEvent(ev.id)).attachments.map((a) => a.id), [fileId]);
+  });
+
+  it('[WRF5] control: an event inside the forced stream is updated and trashed', async function () {
+    const ev = await create(['wrfd-a', 'wrfd-forced']);
+    const upd = await coreRequest.put(eventPath(ev.id)).set('Authorization', forcedToken).send({ content: 'changed' });
+    assert.strictEqual(upd.status, 200, JSON.stringify(upd.body));
+    assert.strictEqual(upd.body.event.content, 'changed');
+    const del = await coreRequest.delete(eventPath(ev.id)).set('Authorization', forcedToken);
+    assert.strictEqual(del.status, 200, JSON.stringify(del.body));
+    assert.strictEqual(del.body.event.trashed, true);
+  });
+});
+
 describe('[SRCU] CMC protections on events.update and internal writes', function () {
   this.timeout(60_000);
 

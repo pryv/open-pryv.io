@@ -4,14 +4,17 @@
 
 ### Events write methods: the read-hiding rule
 
-- `components/business/src/accesses/canReadEvent.ts`: new `hasStreamForbiddenForReading(access, streamIds)` (any
-  stream for which `AccessLogic.isStreamForbiddenForReading` is true; always false for a personal access), used by
-  `canReadEvent` for its forbidden-stream part and by `components/api-server/src/methods/events.ts`:
+- `components/business/src/accesses/canReadEvent.ts`: new `isEventHiddenByGrants(access, streamIds)` (always false
+  for a personal access) = `hasStreamForbiddenForReading` (any stream for which
+  `AccessLogic.isStreamForbiddenForReading` is true) or `isOutsideForcedStreams` (the forced-streams part, moved out
+  of `canReadEvent`). `canReadEvent` uses it for those two parts; `components/api-server/src/methods/events.ts`
   `applyPrerequisitesForUpdate` and `checkEventForDelete` (hence `events.deleteAttachment`) refuse with
   `errors.forbidden()` before the any-one-stream `contribute` rule. The emails and plugin-internal exclusions of
-  `canReadEvent` are not applied there: their dedicated write guards keep their own errors.
-- Tests `[WRN1]` to `[WRN5]` (`none`), `[WRC1]` to `[WRC5]` (`create-only`), controls `[WRR1]` (second stream at
-  `read`) and `[WRP1]` (personal), in `components/api-server/test/events-single-read-exclusions.test.js` (`[WRHD]`).
+  `canReadEvent` are not applied there: their dedicated write guards keep their own errors. HF series writes
+  (`hfs-server` `definePermissions`) and `streams.delete` are left as they were.
+- Tests in `components/api-server/test/events-single-read-exclusions.test.js`: `[WRHD]` with `[WRN1]` to `[WRN5]`
+  (`none`), `[WRC1]` to `[WRC5]` (`create-only`), controls `[WRR1]` (second stream at `read`) and `[WRP1]`
+  (personal); `[WRFD]` with `[WRF1]` to `[WRF5]` (forced streams, the access stored by the fixture).
 
 ### Access tokens and session ids at rest: keyed hash plus encrypted copy
 
