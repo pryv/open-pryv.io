@@ -6,50 +6,36 @@
  */
 
 import { createRequire } from 'node:module';
+import { startPrivateRqlite } from '../../../test/helpers/privateRqlite.js';
 const require = createRequire(import.meta.url);
 require('test-helpers/src/api-server-tests-config.ts');
-const { getConfigUnsafe } = require('@pryv/boiler');
 const { DBrqlite } = require('../src/DBrqlite.ts');
 const conformanceTests = require('platform/test/conformance/PlatformDB.test').default;
 const adminStoreConformance = require('business/test/conformance/adminStore.js').default;
 const platformConfigConformance = require('business/test/conformance/platformConfig.js').default;
 
-// Target the rqlite the test config points at (config/test-config.yml, or its
-// `storages__engines__rqlite__url` env mirror). A hardcoded canonical port
-// would silently hit another checkout's rqlite when several run side by side.
-// Start it with: storages/engines/rqlite/scripts/start
-const RQLITE_URL = process.env.RQLITE_URL ||
-  getConfigUnsafe(true).get('storages:engines:rqlite:url') ||
-  'http://localhost:4001';
-
-describe('[RQPF] rqlite PlatformDB conformance', () => {
-  let db;
+// These suites wipe their store between tests: they run on a private rqlited
+// of their own, never on the rqlite the other suites use (a wipe there would
+// leave their accounts without platform rows).
+describe('[RQPF] rqlite PlatformDB conformance', function () {
+  this.timeout(60000);
+  let rqlite;
 
   before(async function () {
-    // Fail, don't skip: a skipped conformance suite reports green while
-    // proving nothing about the engine.
-    let res;
-    try {
-      res = await fetch(RQLITE_URL + '/status');
-    } catch (e) {
-      throw new Error(`rqlite not reachable at ${RQLITE_URL}: ${e.message}`);
-    }
-    if (!res.ok) throw new Error(`rqlite not ready at ${RQLITE_URL}: HTTP ${res.status}`);
+    rqlite = await startPrivateRqlite(this, '[RQPF] rqlite PlatformDB conformance');
   });
 
-  conformanceTests(async () => {
-    db = new DBrqlite(RQLITE_URL);
+  after(async function () {
+    if (rqlite != null) await rqlite.stop();
+  });
+
+  async function newDB () {
+    const db = new DBrqlite(rqlite.url);
     await db.init();
     return db;
-  });
-  adminStoreConformance(async () => {
-    const adminDb = new DBrqlite(RQLITE_URL);
-    await adminDb.init();
-    return adminDb;
-  });
-  platformConfigConformance(async () => {
-    const configDb = new DBrqlite(RQLITE_URL);
-    await configDb.init();
-    return configDb;
-  });
+  }
+
+  conformanceTests(newDB);
+  adminStoreConformance(newDB);
+  platformConfigConformance(newDB);
 });

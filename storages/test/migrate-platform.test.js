@@ -8,6 +8,7 @@
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
+import { startPrivateRqlite } from './helpers/privateRqlite.js';
 const require = createRequire(import.meta.url);
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -19,37 +20,47 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
  * platform-wide configuration rows and revisions, TTL state
  * (expired rows included) and windowed counters, plus any family it has no
  * typed copy for. Both engines are the
- * real ones, wiped before and after (as the PlatformDB conformance suites do).
+ * real ones, wiped after each test: a private rqlited, and the PostgreSQL
+ * table only when no other suite holds rows in it.
  */
 
 const path = require('node:path');
 const assert = require('node:assert');
 const cuid = require('cuid');
-const { getConfigUnsafe } = require('@pryv/boiler');
 const helpers = require('./helpers/index.js');
 const { DBrqlite } = require('../engines/rqlite/src/DBrqlite.ts');
 const { migrate } = require(path.resolve(__dirname, '../../bin/migrate-platform.js'));
 
-const RQLITE_URL = process.env.RQLITE_URL ||
-  getConfigUnsafe(true).get('storages:engines:rqlite:url') ||
-  'http://localhost:4001';
-
 describe('[MPKV] bin/migrate-platform.js: every platform row family', function () {
-  this.timeout(30000);
+  this.timeout(60000);
   let rq, pg;
   const now = Date.now();
   const suffix = cuid.slug();
 
+  // Both stores are wiped between tests: the rqlite one is a private rqlited
+  // of this suite; the PostgreSQL table is used only when it holds no row of
+  // anyone else (else the suite is skipped, and says why).
+  let privateRqlite;
   before(async function () {
     if (process.env.STORAGE_ENGINE !== 'postgresql') return this.skip();
     await helpers.dependencies.init();
     const { DBpostgresql } = require('../engines/postgresql/src/DBpostgresql.ts');
     pg = new DBpostgresql();
     await pg.init();
-    rq = new DBrqlite(RQLITE_URL);
+    const pgRows = (await pg.listAllPlatformKvEntries()).length;
+    if (pgRows > 0) {
+      pg = null;
+      console.warn(`  SKIPPED [MPKV]: the PostgreSQL platform_kv table holds ${pgRows} row(s) of other suites; ` +
+        'this suite wipes it between tests, so it runs on an empty table only');
+      return this.skip();
+    }
+    privateRqlite = await startPrivateRqlite(this, '[MPKV] bin/migrate-platform.js');
+    rq = new DBrqlite(privateRqlite.url);
     await rq.init();
-    await rq.deleteAll();
-    await pg.deleteAll();
+  });
+
+  after(async function () {
+    if (privateRqlite != null) await privateRqlite.stop();
   });
 
   // In afterEach (not beforeEach), so no seeded row outlives its test.

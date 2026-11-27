@@ -277,9 +277,27 @@ describe('[ADLK] admin lockdown', function () {
     it('[LK15] a store failure never stops the boot', async function () {
       const db = { async setPlatformKv () { throw new Error('store down'); }, async listPlatformKvEntries () { return []; } };
       const log = logger();
-      assert.equal(await runLockdownBoot({ config: config(undefined), logger: log, db, coreId: 'core-a' }), null);
+      assert.equal(await runLockdownBoot({ config: config({ capabilities: { mail: 'readonly' } }), logger: log, db, coreId: 'core-a' }), null);
       assert.equal(log.warns.length, 1);
       assert.match(log.warns[0], /store down/);
+    });
+
+    it('[LK23] the digest row: nothing written for a core that locks nothing and has none, written once when it changes', async function () {
+      const db = memoryStore(null);
+      const writes = [];
+      const set = db.setPlatformKv;
+      db.setPlatformKv = async (k, v) => { writes.push(k); await set(k, v); };
+      const log = logger();
+      await runLockdownBoot({ config: config(undefined), logger: log, db, coreId: 'core-a' });
+      assert.deepEqual(writes, [], 'upgrade with no lockdown: nothing written');
+      const locked = config({ capabilities: { mail: 'readonly' } });
+      await runLockdownBoot({ config: locked, logger: log, db, coreId: 'core-a' });
+      await runLockdownBoot({ config: locked, logger: log, db, coreId: 'core-a' });
+      assert.deepEqual(writes, [LOCKDOWN_HASH_PREFIX + 'core-a'], 'same digest at the next boot: not written again');
+      // The lock removed: the row says so (other cores compare with it).
+      await runLockdownBoot({ config: config(undefined), logger: log, db, coreId: 'core-a' });
+      assert.equal(writes.length, 2);
+      assert.equal(JSON.parse(db.kv.get(LOCKDOWN_HASH_PREFIX + 'core-a')).digest, parseLockdown(undefined, null).digest);
     });
   });
 

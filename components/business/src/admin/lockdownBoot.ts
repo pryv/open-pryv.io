@@ -14,7 +14,8 @@ import type { AdminStore } from './store.ts';
  * it serves:
  * - logs what this core locks, when it locks something;
  * - writes the digest of this core's lockdown to the platform store
- *   (`admin-lockdown-hash/<coreId>` = `{ digest, at }`), and logs
+ *   (`admin-lockdown-hash/<coreId>` = `{ digest, at }`) when it changed;
+ *   nothing for a core that locks nothing and never wrote one; and logs
  *   `WARN [admin-lockdown-drift]` when a core of the platform carries another
  *   digest. Lockdown is per core by design: the warning tells an operator
  *   whose cores are meant to be managed alike that one of them differs.
@@ -67,13 +68,19 @@ export async function runLockdownBoot (opts: LockdownBootOptions): Promise<Lockd
   try {
     const db: LockdownBootStore = opts.db ?? (storages.platformDB as LockdownBootStore);
     const now = opts.now ?? Date.now;
-    await db.setPlatformKv(LOCKDOWN_HASH_PREFIX + coreId, JSON.stringify({ digest: lockdown.digest, at: now() }));
+    const rows = await db.listPlatformKvEntries(LOCKDOWN_HASH_PREFIX);
+    const own = rows.find((r) => r.key === LOCKDOWN_HASH_PREFIX + coreId) ?? null;
+    // Written only when it changed, and never for a core that locks nothing
+    // and has no row yet (an upgrade writes nothing).
+    if (!(lockdown.view == null && own == null) && (own == null || digestOf(own.value) !== lockdown.digest)) {
+      await db.setPlatformKv(LOCKDOWN_HASH_PREFIX + coreId, JSON.stringify({ digest: lockdown.digest, at: now() }));
+    }
     let registered: Set<string> | null = null;
     if (typeof db.getAllCoreInfos === 'function') {
       registered = new Set((await db.getAllCoreInfos()).map((c) => c?.id).filter((id): id is string => typeof id === 'string'));
     }
     const drift: string[] = [];
-    for (const { key, value } of await db.listPlatformKvEntries(LOCKDOWN_HASH_PREFIX)) {
+    for (const { key, value } of rows) {
       const other = key.slice(LOCKDOWN_HASH_PREFIX.length);
       if (other === coreId || (registered != null && !registered.has(other))) continue;
       const digest = digestOf(value);
