@@ -230,8 +230,11 @@ UserDatabase.prototype.getEvents = function (this: UserDatabaseInstance, params:
   params.query.push({ type: 'equal', content: { field: 'deleted', value: null } });
   params.query.push({ type: 'equal', content: { field: 'headId', value: null } });
   const query = prepareEventsGetQuery(this.db, params);
-  this.logger.debug(`GET events: ${query.sql}`);
-  const res = this.db.prepare(query.sql).all(...query.params);
+  const page = boundedWalkPage(this, query);
+  if (page != null) return page.map(eventsSchema.fromDB);
+  const plan = query.bounded?.fallback ?? query;
+  this.logger.debug(`GET events: ${plan.sql}`);
+  const res = this.db.prepare(plan.sql).all(...plan.params);
   if (res != null) {
     return res.map(eventsSchema.fromDB);
   }
@@ -242,9 +245,25 @@ UserDatabase.prototype.getEventsStreamed = function (this: UserDatabaseInstance,
   params.query.push({ type: 'equal', content: { field: 'deleted', value: null } });
   params.query.push({ type: 'equal', content: { field: 'headId', value: null } });
   const query = prepareEventsGetQuery(this.db, params);
-  this.logger.debug(`GET events streamed: ${query.sql}`);
-  return readableEventsStreamForIterator(this.db.prepare(query.sql).iterate(...query.params));
+  const page = boundedWalkPage(this, query);
+  if (page != null) return readableEventsStreamForIterator(page[Symbol.iterator]());
+  const plan = query.bounded?.fallback ?? query;
+  this.logger.debug(`GET events streamed: ${plan.sql}`);
+  return readableEventsStreamForIterator(this.db.prepare(plan.sql).iterate(...plan.params));
 };
+
+/**
+ * Runs the bounded walk of `query` (see `walksTimeIndex`): its rows when the
+ * page is full, which makes it the exact answer; null when there is no
+ * bounded walk, or when it fell short (the caller then runs the fallback).
+ * The page holds at most `limit` rows, read at once.
+ */
+function boundedWalkPage (udb: UserDatabaseInstance, query: EventsGetQuery): EventRow[] | null {
+  if (query.bounded == null) return null;
+  udb.logger.debug(`GET events (bounded walk): ${query.sql}`);
+  const rows = udb.db.prepare(query.sql).all(...query.params);
+  return rows.length >= query.bounded.limit ? rows : null;
+}
 
 /**
  * Reads the base table, where the column indexes apply. Reading `events_fts`
@@ -258,20 +277,39 @@ UserDatabase.prototype.getEventsStreamed = function (this: UserDatabaseInstance,
  *   the matches). When the planner walks the `time` index instead, a stream
  *   holding few events costs a scan of the whole index (measured 128 ms vs
  *   0.1 ms on 500k rows); `NOT INDEXED` rules that plan out. Except for a
- *   small page of a filter most rows meet: see `walksTimeIndex`.
+ *   small page of a filter many rows meet: see `walksTimeIndex`.
  * - `modifiedSince` with no stream filter: see `modifiedSincePlan`.
+ *
+ * `bounded`: the statement is a walk limited to the newest rows; it answers
+ * only when it fills the page (`limit` rows), else `fallback` (the rowid set)
+ * is run.
  */
-function prepareEventsGetQuery (db: SqliteDb, params: GetParams): SqlPart & { usesFullText: boolean } {
+function prepareEventsGetQuery (db: SqliteDb, params: GetParams): EventsGetQuery {
   let tail = prepareQuery(params);
+  let fallback: SqlPart | null = null;
   if (tail.usesFullText) {
-    if (!walksTimeIndex(db, params)) return { ...tail, sql: 'SELECT * FROM events NOT INDEXED ' + tail.sql };
-    params = { ...params, query: params.query.map((q) => q.type === 'streamsQuery' ? { type: 'streamsQueryExact', content: q.content } : q) };
+    const set = { ...tail, sql: 'SELECT * FROM events NOT INDEXED ' + tail.sql };
+    const walk = walksTimeIndex(db, params);
+    if (walk === false) return set;
+    const query = params.query.map((q) => q.type === 'streamsQuery' ? { type: 'streamsQueryExact', content: q.content } : q);
+    if (walk.from != null) {
+      query.push({ type: 'greaterOrEqual', content: { field: 'time', value: walk.from } });
+      fallback = set;
+    }
+    params = { ...params, query };
     tail = prepareQuery(params);
   }
   const plan = modifiedSincePlan(db, params);
   const planned = plan.params === params ? tail : prepareQuery(plan.params);
-  return { ...planned, sql: 'SELECT * FROM events ' + plan.indexedBy + planned.sql };
+  // A bounded walk stays on the `time` index (not, say, a `type` index read
+  // whole and sorted), unless the few rows modified since a bound are read.
+  const indexedBy = fallback != null && plan.indexedBy === '' ? 'INDEXED BY events_time ' : plan.indexedBy;
+  const statement = { ...planned, sql: 'SELECT * FROM events ' + indexedBy + planned.sql };
+  if (fallback == null) return statement;
+  return { ...statement, bounded: { fallback, limit: params.options?.limit as number } };
 }
+
+type EventsGetQuery = SqlPart & { usesFullText: boolean, bounded?: { fallback: SqlPart, limit: number } };
 
 // Full-text candidates counted at most, to choose the plan of a stream filter.
 let candidateProbeCap = 20_000;
@@ -280,15 +318,26 @@ let candidateProbeCap = 20_000;
  * The rowid set reads every row the full-text index selects before `LIMIT`. A
  * filter most rows meet (an expanded `:_audit:accesses` on an audit log of
  * millions of rows) then reads them all for a page of 20: seconds, while the
- * worker waits (better-sqlite3 is synchronous).
+ * worker waits (better-sqlite3 is synchronous). Walking the `time` index with
+ * the exact condition reads about `page * rows / candidates` rows before it
+ * stops when the matches are spread over time, but every newer row when they
+ * are all old. Same rows either way (the full-text set only narrows the exact
+ * condition). So, for a page sorted by time, count the candidates (capped):
  *
- * So, for a page sorted by time, count the candidates (capped). At the cap,
- * walking the `time` index with the exact condition reads about
- * `page * rows / candidates` rows before it stops, the rowid set at least the
- * cap: the walk is taken when its estimate is not above the cap. Same rows
- * either way (the full-text set only narrows the exact condition).
+ * - At the cap the rowid set reads at least the cap: the walk is taken, whole
+ *   (`from` null), when its estimate is not above the cap.
+ * - Under the cap (newest first only), the rowid set reads `candidates` rows,
+ *   growing with the stream (measured 4 ms at 2 400 candidates, 30 ms at
+ *   18 000, against 0.3 ms for the walk when the matches are recent or spread).
+ *   When the estimate is at most half the candidates, the walk is taken over
+ *   the newest `budget` rows only (`from`: the time of the last of them, read
+ *   on the `time` index alone); the caller falls back to the rowid set when
+ *   that walk does not fill the page. A stream holding only old rows then
+ *   costs the rowid set plus that bounded walk, not a scan of every newer row.
+ *
+ * @returns false for the rowid set, else the walk and its lower time bound
  */
-function walksTimeIndex (db: SqliteDb, params: GetParams): boolean {
+function walksTimeIndex (db: SqliteDb, params: GetParams): false | { from: number | null } {
   const options = params.options ?? {};
   const limit = options.limit;
   if (!Number.isInteger(limit) || (limit as number) < 0) return false;
@@ -300,15 +349,36 @@ function walksTimeIndex (db: SqliteDb, params: GetParams): boolean {
   if (filter?.fts == null) return false;
   const candidates = (db.prepare('SELECT count(*) AS n FROM (SELECT 1 FROM events_fts WHERE streamIds MATCH ? LIMIT ?)')
     .get(filter.fts, candidateProbeCap) as { n: number }).n;
-  if (candidates < candidateProbeCap) return false;
   const rows = (db.prepare('SELECT max(rowid) AS n FROM events').get() as { n: number | null }).n ?? 0;
   const skip = Number.isInteger(options.skip) && (options.skip as number) > 0 ? options.skip as number : 0;
-  return ((limit as number) + skip) * rows <= candidates * candidateProbeCap;
+  const page = (limit as number) + skip;
+  if (candidates >= candidateProbeCap) return page * rows <= candidates * candidateProbeCap ? { from: null } : false;
+  if (!boundedWalk || candidates === 0 || (options.sort as Record<string, number>).time >= 0) return false;
+  const estimate = Math.ceil(page * rows / candidates);
+  const budget = Math.min(Math.floor(candidates / 2), 4 * estimate);
+  if (budget < 1 || estimate > budget) return false;
+  // The newest `budget` rows at or before `toTime`, any state: index only.
+  const toTime = params.query.find((q) => q.type === 'lowerOrEqual' && (q.content as { field?: string })?.field === 'time');
+  const bound = toTime == null
+    ? db.prepare('SELECT time FROM events ORDER BY time DESC LIMIT 1 OFFSET ?').get(budget - 1)
+    : db.prepare('SELECT time FROM events WHERE time <= ? ORDER BY time DESC LIMIT 1 OFFSET ?')
+      .get(bindValue('time', (toTime.content as { value: unknown }).value), budget - 1);
+  const from = (bound as { time: number | null } | undefined)?.time;
+  return typeof from === 'number' ? { from } : false;
 }
 
 function _setCandidateProbeCap (cap: number): number {
   const previous = candidateProbeCap;
   candidateProbeCap = cap;
+  return previous;
+}
+
+// Test hook: false keeps the rowid set under the cap (no bounded walk).
+let boundedWalk = true;
+
+function _setBoundedWalk (enabled: boolean): boolean {
+  const previous = boundedWalk;
+  boundedWalk = enabled;
   return previous;
 }
 
@@ -587,7 +657,8 @@ UserDatabase.prototype.deleteEvents = async function (this: UserDatabaseInstance
     this.logger.debug(`DELETE events one by one as the query reads the full-text index: ${query.sql}`);
     // HACK: SQLite does not know how to delete with "MATCH" statement,
     //       so we're getting events that match and deleting them one by one
-    const selectEventsToBeDeleted = prepareEventsGetQuery(this.db, params);
+    const selected = prepareEventsGetQuery(this.db, params);
+    const selectEventsToBeDeleted = selected.bounded?.fallback ?? selected;
 
     for (const event of this.db.prepare(selectEventsToBeDeleted.sql).iterate(...selectEventsToBeDeleted.params) as Iterable<{ eventid: string }>) {
       this.logger.debug(`  > DELETE event: ${event.eventid}`);
@@ -976,4 +1047,4 @@ function pagingClause (limit: unknown, skip: unknown): SqlPart {
   return part;
 }
 
-export { UserDatabase, AuditUserDatabase, jsonConditionToSql, _setModifiedProbeCap, _setCandidateProbeCap, _setSummaryChunkRows, _summaryCounters };
+export { UserDatabase, AuditUserDatabase, jsonConditionToSql, _setModifiedProbeCap, _setCandidateProbeCap, _setBoundedWalk, _setSummaryChunkRows, _summaryCounters };

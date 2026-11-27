@@ -12,7 +12,7 @@ const cuid = require('cuid');
 const userLocalDirectory = require('../../../test/helpers').userLocalDirectory;
 const { SqliteStorage: Storage } = require('storages/engines/sqlite/src/userSQLite/Storage.ts');
 const { localStorePrepareOptions, localStorePrepareQuery } = require('storage/src/localStoreEventQueries.ts');
-const { _setModifiedProbeCap, _setCandidateProbeCap } = require('storages/engines/sqlite/src/userSQLite/UserDatabase.ts');
+const { _setModifiedProbeCap, _setCandidateProbeCap, _setBoundedWalk } = require('storages/engines/sqlite/src/userSQLite/UserDatabase.ts');
 
 /**
  * `events.get` on a large per-user file (an audit log of several GB) must not
@@ -68,22 +68,29 @@ describe('[SQQP] userSQLite events.get query plans', function () {
   });
 
   // Run a store-level query; return the rows and the plan of the SQL used.
-  async function run (storeQuery, storeOptions) {
+  // `walked`: the SQL of a bounded walk run first (`sql` is then the
+  // fallback's, or the walk's own when it answered).
+  async function run (storeQuery, storeOptions, db = userDb) {
     let sql = null;
-    const debug = userDb.logger.debug;
-    userDb.logger.debug = (msg) => { if (typeof msg === 'string' && msg.startsWith('GET events streamed: ')) sql = msg.slice(21); };
-    let stream;
-    try {
-      stream = userDb.getEventsStreamed({ query: localStorePrepareQuery(storeQuery), options: localStorePrepareOptions(storeOptions) });
-    } finally {
-      userDb.logger.debug = debug;
-    }
+    let walked = null;
+    const debug = db.logger.debug;
+    db.logger.debug = (msg) => {
+      if (typeof msg !== 'string') return;
+      if (msg.startsWith('GET events streamed: ')) sql = msg.slice(21);
+      if (msg.startsWith('GET events (bounded walk): ')) walked = msg.slice(27);
+    };
     const rows = [];
-    for await (const e of stream) rows.push(e);
+    try {
+      const stream = db.getEventsStreamed({ query: localStorePrepareQuery(storeQuery), options: localStorePrepareOptions(storeOptions) });
+      for await (const e of stream) rows.push(e);
+    } finally {
+      db.logger.debug = debug;
+    }
+    sql ??= walked;
     // Values are bound (`?`): the plan does not depend on them.
     const placeholders = (sql.match(/\?/g) || []).length;
-    const plan = userDb.db.prepare('EXPLAIN QUERY PLAN ' + sql).all(...new Array(placeholders).fill(null)).map((r) => r.detail).join(' | ');
-    return { rows, plan, sql };
+    const plan = db.db.prepare('EXPLAIN QUERY PLAN ' + sql).all(...new Array(placeholders).fill(null)).map((r) => r.detail).join(' | ');
+    return { rows, plan, sql, walked };
   }
 
   it('[SQQP1] with no stream filter, walks the time index and stops at the limit (no full sort)', async function () {
@@ -207,7 +214,9 @@ describe('[SQQP] userSQLite events.get query plans', function () {
         const walked = await run(q, o);
         assert.ok(!walked.sql.includes('NOT INDEXED'), 'walked ' + JSON.stringify([q, o]));
         _setCandidateProbeCap(1e9);
+        const bounded = _setBoundedWalk(false);
         const set = await run(q, o);
+        _setBoundedWalk(bounded);
         _setCandidateProbeCap(20);
         assert.match(set.sql, /NOT INDEXED/, set.sql);
         assert.deepStrictEqual(walked.rows.map((e) => e.id), set.rows.map((e) => e.id), JSON.stringify([q, o]));
@@ -215,6 +224,80 @@ describe('[SQQP] userSQLite events.get query plans', function () {
       }
     } finally {
       _setCandidateProbeCap(previous);
+    }
+  });
+
+  it('[SQQPB] newest first under the cap: a walk over the newest rows, the rowid set when it falls short; the same rows', async function () {
+    // 400 rows: `old` holds the even rows of the oldest half, `recent` the even
+    // rows of the newest half (one trashed), `bulk` the odd rows.
+    const userId2 = userId + '-b';
+    const db = await storage.forUser(userId2);
+    try {
+      for (let i = 0; i < 400; i++) {
+        db.createEventSync({
+          id: 'sqqpb-' + i,
+          streamIds: [i % 2 === 1 ? 'bulk' : (i < 200 ? 'old' : 'recent')],
+          type: 'note/txt',
+          time: 2000 + i,
+          created: 2000 + i,
+          createdBy: 'test',
+          modified: 2000 + i,
+          modifiedBy: 'test',
+          trashed: i === 398
+        });
+      }
+      const ids = (from, step, n) => Array.from({ length: n }, (_, k) => 'sqqpb-' + (from - k * step));
+      // Recent matches: the walk over the newest rows fills the page.
+      const recent = await run({ streams: [[{ any: ['recent'] }]] }, { limit: 5 }, db);
+      assert.ok(recent.walked != null && recent.sql === recent.walked, recent.sql);
+      assert.match(recent.sql, /time >= \?/, recent.sql);
+      assert.ok(!recent.sql.includes('NOT INDEXED') && !recent.sql.includes('events_fts'), recent.sql);
+      assert.match(recent.plan, /USING INDEX events_time/, recent.plan);
+      assert.doesNotMatch(recent.plan, /TEMP B-TREE/, recent.plan);
+      assert.deepStrictEqual(recent.rows.map((e) => e.id), ids(396, 2, 5));
+      // Old matches only: the bounded walk finds none, the rowid set answers.
+      const old = await run({ streams: [[{ any: ['old'] }]] }, { limit: 5 }, db);
+      assert.ok(old.walked != null, 'bounded walk tried first');
+      assert.match(old.sql, /NOT INDEXED/, old.sql);
+      assert.deepStrictEqual(old.rows.map((e) => e.id), ids(198, 2, 5));
+      // A type condition does not move the walk to the `type` index.
+      const typed = await run({ streams: [[{ any: ['recent'] }]], types: ['note/txt'] }, { limit: 5 }, db);
+      assert.ok(typed.walked != null && typed.sql === typed.walked, typed.sql);
+      assert.match(typed.plan, /USING INDEX events_time/, typed.plan);
+      assert.doesNotMatch(typed.plan, /TEMP B-TREE/, typed.plan);
+      // Ascending order keeps the rowid set.
+      const asc = await run({ streams: [[{ any: ['recent'] }]] }, { limit: 5, sortAscending: true }, db);
+      assert.strictEqual(asc.walked, null);
+      assert.match(asc.sql, /NOT INDEXED/, asc.sql);
+      // Same rows as the rowid set: skip, toTime, `not`, OR of blocks, trashed,
+      // and through `getEvents` too.
+      const cases = [
+        [{ streams: [[{ any: ['recent'] }]] }, { limit: 12 }],
+        [{ streams: [[{ any: ['recent'] }]], types: ['note/txt'] }, { limit: 5 }],
+        [{ streams: [[{ any: ['recent'] }]], modifiedSince: 2390 }, { limit: 2 }],
+        [{ streams: [[{ any: ['recent'] }]] }, { limit: 5, skip: 3 }],
+        [{ streams: [[{ any: ['recent'] }]], toTime: 2300 }, { limit: 5 }],
+        [{ streams: [[{ any: ['old'] }]], toTime: 2300 }, { limit: 5 }],
+        [{ streams: [[{ any: ['bulk'] }, { not: ['recent'] }]] }, { limit: 7 }],
+        [{ streams: [[{ any: ['old'] }], [{ any: ['recent'] }]] }, { limit: 6 }],
+        [{ state: 'all', streams: [[{ any: ['recent'] }]] }, { limit: 3 }],
+        [{ streams: [[{ any: ['recent'] }]] }, { limit: 0 }]
+      ];
+      for (const [q, o] of cases) {
+        const walked = await run(q, o, db);
+        const list = db.getEvents({ query: localStorePrepareQuery(q), options: localStorePrepareOptions(o) });
+        const bounded = _setBoundedWalk(false);
+        const set = await run(q, o, db);
+        _setBoundedWalk(bounded);
+        assert.strictEqual(set.walked, null);
+        assert.match(set.sql, /NOT INDEXED/, set.sql);
+        assert.deepStrictEqual(walked.rows.map((e) => e.id), set.rows.map((e) => e.id), JSON.stringify([q, o]));
+        assert.deepStrictEqual(list.map((e) => e.id), set.rows.map((e) => e.id), 'getEvents ' + JSON.stringify([q, o]));
+        assert.ok(set.rows.length > 0 || o.limit === 0, JSON.stringify([q, o]));
+      }
+    } finally {
+      storage.closeUser(userId2);
+      try { await userLocalDirectory.deleteUserDirectory(userId2); } catch (_e) { /* best-effort */ }
     }
   });
 
