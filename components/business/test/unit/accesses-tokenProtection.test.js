@@ -92,6 +92,47 @@ describe('[TKPA] accesses/tokenProtection', () => {
     assert.equal(tp.openAccessToken('user-a', h, tp.sealAccessToken('user-a', h, 'token-1')), 'token-1');
   });
 
+  it('[TKPA6] access integrity and outbound secrets: sealed under the kid, opened for the same user or context only', () => {
+    const { deriveKey, encrypt } = require('../../src/acme/AtRestEncryption.ts');
+    const integrity = 'ACCESS:0:sha256-abc=';
+    const sealed = tp.sealAccessIntegrity('user-a', integrity);
+    assert.isTrue(sealed.startsWith('sealed:' + tp.kid + '.'));
+    assert.notInclude(sealed, 'sha256-abc');
+    assert.equal(tp.openAccessIntegrity('user-a', sealed), integrity);
+    assert.notEqual(tp.sealAccessIntegrity('user-a', integrity), sealed);
+    assert.isTrue(tp.isSealed(sealed));
+    assert.isTrue(tp.ownsSealed(sealed));
+    assert.isFalse(tp.isSealed(integrity));
+    assert.isFalse(tp.ownsSealed(integrity));
+    assert.isFalse(tp.isSealed(null));
+    const other = createTokenProtection('another admin key');
+    assert.isTrue(other.isSealed(sealed));
+    assert.isFalse(other.ownsSealed(sealed));
+    const refuses = (fn) => {
+      let err = null;
+      try { fn(); } catch (e) { err = e; }
+      assert.isNotNull(err);
+      assert.equal(err.name, 'TokenUnreadableError');
+      assert.notInclude(err.message, 'sha256-abc');
+    };
+    refuses(() => tp.openAccessIntegrity('user-b', sealed));
+    refuses(() => other.openAccessIntegrity('user-a', sealed));
+    refuses(() => tp.openAccessIntegrity('user-a', integrity));
+    // the same key id prefix in front of a version-1 envelope
+    const v1 = encrypt(integrity, deriveKey('some admin key', 'access-integrity-enc-v1'), '', 1);
+    refuses(() => tp.openAccessIntegrity('user-a', 'sealed:' + tp.kid + '.' + v1));
+    // a tampered envelope
+    const tampered = sealed.slice(0, -4) + (sealed.endsWith('AAAA') ? 'BBBB' : 'AAAA');
+    refuses(() => tp.openAccessIntegrity('user-a', tampered));
+    // an integrity envelope does not open as a secret, nor the reverse
+    const secret = tp.sealSecret('deletion-notice:n1', 'https://tok@peer.example/u/');
+    assert.isTrue(tp.ownsSealed(secret));
+    assert.equal(tp.openSecret('deletion-notice:n1', secret), 'https://tok@peer.example/u/');
+    refuses(() => tp.openSecret('deletion-notice:n2', secret));
+    refuses(() => tp.openSecret('access-integrity:user-a', sealed));
+    refuses(() => tp.openAccessIntegrity('n1', secret));
+  });
+
   it('[TKPA5] a set auth.accessTokensKey that is a placeholder refuses the boot; empty or random passes', () => {
     const { checkOptionalSecrets } = require('../../../../config/plugins/config-validation.js');
     const problemsFor = (accessTokensKey) => {
@@ -136,6 +177,18 @@ describe('[TKPA] accesses/tokenProtection', () => {
       const clean = await run(false, { probe: { columnsReady: true, clearRows: false } });
       assert.deepEqual([clean.warn, clean.log, clean.protected], [[], [], 0]);
       assert.equal(pending.protected, 0);
+    });
+
+    it('[TKBT4] autoRunOnStart false: integrity values alone in clear warn, naming migrate up, and never refuse the start', async () => {
+      const res = await run(false, { probe: { columnsReady: true, clearRows: false, clearIntegrityOnly: true } });
+      assert.lengthOf(res.warn, 1);
+      assert.match(res.warn[0], /integrity values are still stored in clear/);
+      assert.match(res.warn[0], /migrate\.js up/);
+      assert.equal(res.protected, 0);
+      // tokens waiting too: the refusal wins
+      let err = null;
+      try { await run(false, { probe: { columnsReady: true, clearRows: true, clearIntegrityOnly: false } }); } catch (e) { err = e; }
+      assert.isNotNull(err);
     });
 
     it('[TKBT3] autoRunOnStart true: converts, logs the counts, warns with the remedy when rows were left in clear', async () => {

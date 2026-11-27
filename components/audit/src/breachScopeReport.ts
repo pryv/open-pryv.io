@@ -495,7 +495,8 @@ export function renderMarkdown (report: BreachScopeReport): string {
     L.push('| action | key | integrity | time |');
     L.push('| --- | --- | --- | --- |');
     for (const e of r.records.written.integrityEvidence) {
-      L.push(`| ${e.action} | ${e.key} | ${e.integrity} | ${e.time} |`);
+      // An access write records its key only: the hash stays in the access row.
+      L.push(`| ${e.action} | ${e.key} | ${e.integrity !== '' ? e.integrity : '(key only)'} | ${e.time} |`);
     }
   }
   L.push('');

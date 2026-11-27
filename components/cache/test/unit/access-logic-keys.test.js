@@ -52,4 +52,22 @@ describe('[CAKY] Access-logic cache keys', function () {
     assert.strictEqual(cache.getAccessLogicForToken(u, 'permissions') ?? null, null);
     assert.strictEqual(cache.getAccessLogicForToken(u, 'id') ?? null, null);
   });
+
+  it('[CAKY3] an access set again under a new token is no longer found by its previous token', function () {
+    const u = freshUserId();
+    cache.setAccessLogic(u, { id: 'a', token: 'old-token' });
+    const renewed = { id: 'a', token: 'new-token' };
+    cache.setAccessLogic(u, renewed);
+    assert.strictEqual(cache.getAccessLogicForToken(u, 'old-token') ?? null, null);
+    assert.strictEqual(cache.getAccessLogicForToken(u, 'new-token'), renewed);
+    assert.strictEqual(cache.getAccessLogicForId(u, 'a'), renewed);
+    // the id-only invalidation then evicts the current token
+    cache.unsetAccessLogic(u, { id: 'a' }, false);
+    assert.strictEqual(cache.getAccessLogicForToken(u, 'new-token') ?? null, null);
+    // the same token set again for the same id stays found
+    const same = { id: 'b', token: 'b-token' };
+    cache.setAccessLogic(u, same);
+    cache.setAccessLogic(u, same);
+    assert.strictEqual(cache.getAccessLogicForToken(u, 'b-token'), same);
+  });
 });

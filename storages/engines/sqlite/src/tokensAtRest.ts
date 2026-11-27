@@ -9,19 +9,46 @@
  * Access tokens and session ids at rest, SQLite: the start-up walk over the
  * user databases (marker file with the key id), the guard against rows under
  * another key, and the operator passes of `bin/access-tokens.js` (status,
- * unprotect, rekey). Sessions live in the shared database. Every pass is
+ * unprotect, rekey). Sessions live in the shared database. The same passes
+ * seal the stored access `integrity` and the endpoint of pending deletion
+ * notices, and the walk drops the token of deleted accesses. Every pass is
  * idempotent.
  */
 
+import fs from 'node:fs';
+import path from 'node:path';
 import type { TokenProtection } from '../../../interfaces/_shared/tokenProtection.ts';
 import type { AccessesSQLite } from './user/AccessesSQLite.ts';
 import type { SessionsSQLite } from './SessionsSQLite.ts';
 import { foreignKeyError } from '../../../interfaces/_shared/tokenProtection.ts';
 import { _internals } from './_internals.ts';
 import {
-  protectAccessTokensOnce, eachUserAccessesDb, tokenMarkerKid, writeTokenMarker, removeTokenMarker,
+  protectAccessTokensOnce, eachUserAccessesDb, tokenMarkerKid, tokenMarkerVersion, writeTokenMarker, removeTokenMarker,
   tokensUnprotected, writeUnprotectedMarker, removeUnprotectedMarker
 } from './user/AccessesSQLite.ts';
+import { DeletionNoticesLocalSQLite } from './deletionNoticesLocal.ts';
+
+type IntegrityStatus = { clear: number; sealedCurrentKey: number; sealedOtherKeys: Record<string, number> };
+
+/** Whether the core's deletion-notice database exists (read-only callers do not create it). */
+function noticesFileExists (): boolean {
+  const base = (_internals.config as { path?: unknown } | undefined)?.path;
+  return typeof base === 'string' && fs.existsSync(path.join(base, 'cmc-deletion-notices.db'));
+}
+
+let noticesInstance: Promise<DeletionNoticesLocalSQLite> | null = null;
+
+/** The core's deletion notices (file next to the users index), for the passes: one connection per process. */
+async function notices (tp: TokenProtection): Promise<DeletionNoticesLocalSQLite> {
+  if (noticesInstance == null) {
+    const n = new DeletionNoticesLocalSQLite(tp);
+    noticesInstance = n.init().then(() => n);
+    noticesInstance.catch(() => { noticesInstance = null; });
+  }
+  const n = await noticesInstance;
+  n.tokenProtection = tp;
+  return n;
+}
 
 type KeyStatus = { clear: number; protectedCurrentKey: number; protectedOtherKeys: Record<string, number> };
 type Layer = { accesses: AccessesSQLite; sessions: SessionsSQLite };
@@ -65,7 +92,17 @@ async function protectTokensAtRest (): Promise<Record<string, number>> {
   removeUnprotectedMarker();
   const a = await protectAccessTokensOnce(accesses);
   const s = sessions.hasClearRows() ? await sessions.protectClearRows() : { rows: 0, expired: 0 };
-  return { accesses: a?.rows ?? 0, accessesFailedUsers: a?.failedUsers ?? 0, sessions: s.rows, sessionsExpired: s.expired };
+  const n = await (await notices(accesses.tokenProtection)).protectClearRows();
+  // The audit copies of the access hash are scrubbed by the barrel, for the
+  // AUDIT engine (`storages/index.ts` `getTokensAtRest`).
+  return {
+    accesses: a?.rows ?? 0,
+    accessesFailedUsers: a?.failedUsers ?? 0,
+    deletedTokens: a?.deletedTokens ?? 0,
+    sessions: s.rows,
+    sessionsExpired: s.expired,
+    deletionNotices: n
+  };
 }
 
 function addStatus (status: KeyStatus, kid: string, k: string, n: number): void {
@@ -75,22 +112,36 @@ function addStatus (status: KeyStatus, kid: string, k: string, n: number): void 
   else status.protectedOtherKeys[k] = (status.protectedOtherKeys[k] ?? 0) + n;
 }
 
+function addIntegrityStatus (status: IntegrityStatus, kid: string, k: string, n: number): void {
+  if (k === 'none') return;
+  if (k === 'clear') status.clear += n;
+  else if (k === kid) status.sealedCurrentKey += n;
+  else status.sealedOtherKeys[k] = (status.sealedOtherKeys[k] ?? 0) + n;
+}
+
 /** Read-only (the walk visits the databases without their first-use conversion). */
 async function tokensAtRestStatus (): Promise<Record<string, unknown>> {
   await usersDirectory();
   const { accesses, sessions } = layer();
   const kid = accesses.tokenProtection.kid;
   const status: KeyStatus = { clear: 0, protectedCurrentKey: 0, protectedOtherKeys: {} };
+  const integrity: IntegrityStatus = { clear: 0, sealedCurrentKey: 0, sealedOtherKeys: {} };
   const failed = await eachUserAccessesDb(async (udb: UserDbHandle) => {
     for (const r of accesses.tokenStatusOfUser(udb)) addStatus(status, kid, r.k, r.n);
+    for (const r of accesses.integrityStatusOfUser(udb)) addIntegrityStatus(integrity, kid, r.k, r.n);
   });
   return {
     kid,
     marker: tokenMarkerKid(),
+    markerWalk: tokenMarkerVersion(),
     unprotected: tokensUnprotected(),
     accesses: status,
+    accessIntegrity: integrity,
     accessesFailedUsers: failed.length,
-    sessions: sessions.tokenStatus()
+    sessions: sessions.tokenStatus(),
+    deletionNotices: noticesFileExists()
+      ? await (await notices(accesses.tokenProtection)).sealStatus()
+      : { clear: 0, sealedCurrentKey: 0, sealedOtherKeys: {} }
   };
 }
 
@@ -112,14 +163,17 @@ async function unprotectTokensAtRest (): Promise<Record<string, number>> {
   removeTokenMarker();
   if (sessions.hasForeignKeyRows()) throw foreignKeyError('sessions');
   const s = await sessions.unprotectRows();
-  return { accesses: rows, sessions: s.rows };
+  const n = await (await notices(accesses.tokenProtection)).unprotectRows();
+  return { accesses: rows, sessions: s.rows, deletionNotices: n };
 }
 
 async function rekeyTokensAtRest (previous: TokenProtection[]): Promise<Record<string, number | boolean>> {
   await usersDirectory();
   const { accesses, sessions } = layer();
-  // A walk not completed yet stays to do (it converts the rows still in clear).
+  // A walk not completed yet stays to do (it converts the rows still in
+  // clear), and so does a walk of an earlier version: the marker keeps it.
   const hadMarker = tokenMarkerKid() != null;
+  const walkVersion = tokenMarkerVersion();
   let rows = 0;
   let skipped = 0;
   const failed = await eachUserAccessesDb(async (udb: UserDbHandle) => {
@@ -128,9 +182,10 @@ async function rekeyTokensAtRest (previous: TokenProtection[]): Promise<Record<s
     skipped += r.skipped;
   });
   const s = await sessions.rekeyRows(previous);
+  const n = await (await notices(accesses.tokenProtection)).rekeyRows(previous);
   const remaining = skipped > 0 || failed.length > 0 || sessions.hasForeignKeyRows();
-  if (!remaining && hadMarker) writeTokenMarker(accesses.tokenProtection.kid);
-  return { accesses: rows, sessions: s.rows, remaining };
+  if (!remaining && hadMarker) writeTokenMarker(accesses.tokenProtection.kid, walkVersion);
+  return { accesses: rows, sessions: s.rows, deletionNotices: n, remaining };
 }
 
 export {

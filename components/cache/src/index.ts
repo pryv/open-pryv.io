@@ -367,6 +367,11 @@ function setAccessLogic (userId: string, accessLogic: { id: string; token: strin
     };
     set(NS.ACCESS_LOGICS_FOR_USERID, userId, accessLogics);
   }
+  // The same access under a new token: its previous token no longer resolves.
+  const previousToken = accessLogics.ids.get(accessLogic.id)?.token;
+  if (previousToken != null && previousToken !== accessLogic.token && accessLogics.tokens.get(previousToken)?.id === accessLogic.id) {
+    accessLogics.tokens.delete(previousToken);
+  }
   accessLogics.tokens.set(accessLogic.token, accessLogic);
   accessLogics.ids.set(accessLogic.id, accessLogic);
 }

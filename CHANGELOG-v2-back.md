@@ -2,6 +2,140 @@
 
 ## Unreleased
 
+### Access tokens at rest: access integrity sealed, audit copy and deleted tokens gone, deletion notices sealed
+
+- Protection object (`business/src/accesses/tokenProtection.ts`, contract in
+  `storages/interfaces/_shared/tokenProtection.ts`): two more HKDF labels, `access-integrity-enc-v1` and
+  `outbound-credential-enc-v1`; `sealAccessIntegrity` / `openAccessIntegrity` (context `access-integrity:<userId>`),
+  `sealSecret` / `openSecret` (caller context), `isSealed`, `ownsSealed`. Stored form `sealed:<kid>.<envelope>`
+  (version-2 envelope only; the key id is in the value, so rows without a token hash carry it too). An envelope
+  that does not open throws `TokenUnreadableError`.
+- Access `integrity` (both engines, same column / JSON key, no DDL for the value): sealed on every write
+  (`AccessesPG.toStorageItem` / `protectUpdate`, `AccessesSQLite.itemToRow`); an item or update from above the
+  engine never carries a stored form, so every string is sealed there, a `sealed:`-looking one included (it reads
+  back unchanged and never trips the key guard); only the raw passes (conversion, re-key) leave a stored sealed
+  value as is. Opened on read; a value without the prefix is a clear one and returned as stored. A sealed value
+  that does not open is logged once per access and process (ids only) and the item is returned without
+  `integrity` (reads never throw for it; the integrity check reports "missing integrity property"). A query on an `integrity` value is refused (`refuseIntegrityValueCondition`; `null` and
+  `{ $ne: null }` pass); SQLite `compareAndSetJson` refuses the path. The wire-form recompute compares and sets on
+  the stored value and writes it sealed. Passes: PostgreSQL `sealClearIntegrityRows` (batched compare-and-set,
+  keyset on the primary key), `unsealIntegrityRows`, `rekeyIntegrityRows` (a value that does not open under its
+  previous key is logged, left and listed as `integrityUnreadable`; the run goes on), `hasClearIntegrityRows`,
+  `hasForeignKeyIntegrityRows` (two-bound probe), `integrityStatus`; SQLite: the per-user conversion, rollback,
+  re-key, foreign-key check and status cover `data.integrity`. The boot guard refuses integrity values under
+  another key; the PostgreSQL probe returns `clearIntegrityOnly`, which `tokensAtRestAtBoot` turns into a warning
+  (not a refusal) when `migrations.autoRunOnStart` is false.
+- Deleted accesses: `delete()` (both engines) also unsets the token (its three stored forms) and, in the same
+  transaction, drops the token of the history rows of the heads it marked (`dropTokensOfDeletedRowsOn(client,
+  userId, deletedAt)` / `_dropTokensOfDeletedRowsSync(udb, deletedAt)`: `head_id IN` the heads with `deleted =
+  deletedAt`, through `idx_access_head_id` on PostgreSQL, the `deleted` / `head_id` indexes on SQLite; the passes and
+  `importAll` sweep every deleted row and history row of a deleted head): `modified` untouched, a stored integrity
+  that verifies on the row with its token re-hashed without it, any other kept as stored. `applyDefaults` mints a
+  token for a live head only. `importAll` (a restore) runs the user-wide drop afterwards (not in the import's
+  transaction: a crash between leaves them to the next conversion pass); `insertMany` (fixtures) does not.
+- Audit: `accesses.create` puts `{ key }` only in `context.auditIntegrityPayload`. Existing records are scrubbed by
+  the AUDIT engine, whatever the base one: the storages barrel's `getTokensAtRest().protectTokensAtRest` (master
+  start, `bin/migrate.js up`) calls the audit engine's `scrubAccessAuditIntegrity({ force, auditStorage })`, `force`
+  when the base pass converted rows (a previous image wrote them after a rollback, and its audit records carry the
+  hash). SQLite (`sqlite/src/auditAccessIntegrityScrub.ts`): a walk over the users' audit databases, `VACUUM` of
+  each one changed, marker `audit-access-integrity-scrubbed.done` (`force` walks again). PostgreSQL
+  (`postgresql/src/auditAccessIntegrityScrub.ts`, also migration `20261127_120500`): `content #- '{record,integrity}'`
+  where `content.record.key` starts with `ACCESS:`, through the partial index `idx_audit_access_integrity`
+  (created on first use only when `to_regclass` finds none: `CREATE INDEX IF NOT EXISTS` would take the table's
+  SHARE lock at every start and break a concurrent index build of `audit_events`; empty afterwards), at every
+  start, so a core whose audit alone is on PostgreSQL (its
+  migrations do not run there) is covered too. Audit records carry no integrity of their own (`Audit.ts` never sets
+  it), so the content is edited in place. `breachScopeReport` renders an access write as `(key only)`.
+- Deletion notices (`deletionNoticesLocal.ts`, both engines, helpers in `interfaces/_shared/deletionNoticeSeal.ts`):
+  a pending row's `api_endpoint` is sealed (context `deletion-notice:<id>`), a terminal row keeps the stripped URL in
+  clear; a value that does not open reads as `''`, which `runDeletionOutboxPass` retires as `failed-permanent`
+  with reason `cmc-notice-credential-unreadable`. A pending row's endpoint given from above is sealed whatever its
+  shape. `protectClearRows` / `unprotectRows` / `rekeyRows` (one that does not open under its previous key is logged
+  and left) / `sealStatus`, called by `tokensAtRest.ts`. The protection comes from storage init, else from the
+  configuration. SQLite `status` does not create the notice database when it is absent.
+- PostgreSQL migration `20261127_120400`: `idx_access_integrity_clear` (`accesses(user_id) WHERE integrity IS NOT
+  NULL AND integrity NOT LIKE 'sealed:%'`, empty in steady state), `idx_access_integrity_kid`
+  (`left(integrity, 16)` of sealed values), `idx_access_head_id` (`accesses(user_id, head_id)` of history rows),
+  then `protectTokensAtRest(db, { deletedTokens: true })`. Migration `20261127_120100` now runs
+  `protectTokensAtRest(db, { tokensOnly: true })`: tokens and sessions only, the rest after `120400`'s indexes. The
+  start pass drops deleted tokens only after converting access rows (rows a previous image wrote).
+- SQLite walk marker: first line `<kid> v2`. A marker without `v2` is a walk to do again (not another key); the
+  walk now also drops the tokens of deleted rows; the first use of a user database converts tokens and integrity
+  only. `rekey` keeps the marker's walk version.
+- `bin/access-tokens.js`: `status` adds `accessIntegrity` and `deletionNotices` (SQLite also `markerWalk`);
+  `unprotect` / `rekey` report the integrity values and notices they rewrote; `rekey` lists the integrity values
+  that did not open (user id, access id) with the remedy.
+- Tests: `[TKPA6]`, `[TKBT4]` (business unit); `[TKIN0]`-`[TKIN9]`, `[TKIM1]`, `[TKIR1]`, `[TKUP1]`,
+  `[TKDL1]`-`[TKDL5]`, `[TKDN1]`-`[TKDN3]`, `[TKDN5]`, `[TKIA2]`, `[TKIA3]`, `[TKIA4]` (the
+  scrub runs while another session holds `SHARE UPDATE EXCLUSIVE` on `audit_events`; fails with the guard removed)
+  (`components/storage/test/unit/accessTokensAtRest.test.js`; `[TKST6]`, `[TKMG1]`, `[TKPR2]` adjusted);
+  `[TKDN4]` (`components/cmc/test/deletionOutbox.test.js`); `[TKIA1]` (`components/audit/test/acceptance/integrity.test.js`,
+  replaces the check that the record carried the hash).
+
+### Access tokens at rest: cheaper start checks, concurrent conversion, report of unreadable rows
+
+- The checks every start runs no longer read whole tables. PostgreSQL migration `20261127_120300` adds
+  `idx_access_token_kid` (`left(token_hash, 9)` of protected access rows), `idx_session_kid` (`left(id, 9)` of
+  protected sessions) and `idx_session_clear` (sessions keyed by their clear id, empty in steady state); the key-id
+  guard reads the smallest and the largest prefix (`keyIdPrefixesForeign` in
+  `storages/interfaces/_shared/tokenProtection.ts`) instead of scanning for a row under another key. SQLite: the
+  shared database gets `sessions_clear` and `sessions_kid` (created at init), the same two-bound probe. Measured on
+  200 000 access rows and 50 000 sessions (PostgreSQL): the start checks went from about 60-90 ms of sequential
+  scans to index reads.
+- PostgreSQL: a pass that rewrote rows (`protectTokensAtRest`: tokens, deleted tokens, integrity; sessions) ends with
+  `ANALYZE` of the tables it rewrote. Measured on 200 000 access rows and 50 000 sessions right after the chain of
+  migrations: the statistics still described the clear form, so the clear-row probes read the whole tables (start
+  checks about 120 ms) until autovacuum analyzed them; after the `ANALYZE` (0.45 s, once) they read the empty
+  partial indexes (start checks 2 to 5 ms). Test `[TKPR3]`.
+- PostgreSQL conversion pass: a batch whose rows another process converted meanwhile (two masters starting on one
+  database) no longer ends the pass; it selects again until no clear row is left (`AccessesPG.protectClearRows`,
+  stopping only when the same first row comes back with no progress). `AccessesPG.tokenBatchSize` (default 1000)
+  sets the batch.
+- Cache: `setAccessLogic` for an access id already cached under another token drops that token from the token map.
+- `accesses.exportAll(user, callback, { onUnreadableRow })` (both engines): a row whose token does not open is
+  reported and left out instead of failing the read; `IntegrityCheck` uses it, so `bin/integrity-check.js` reports
+  such an access as an error ("integrity not verifiable") and goes on with the others, and a SQLite user database
+  under another key as an error of that user. Lookups and the plain `exportAll` still fail closed.
+  `BaseStorageSQLite._userDbAnd` is now protected.
+- `bin/access-tokens.js` accepts `--config <file>` like `bin/master.js` and `bin/integrity-check.js` (a missing file
+  is refused before boiler init, which would skip it silently); it was refused as an unknown argument.
+- SQLite per-user audit layout migration (`userSQLite/migrations/index.ts`, `foreachUserDirectory`, now exported):
+  the shared files of the users base directory (users index, shared database, markers) are logged at debug, no
+  longer as `Skipping no 1 char...` warnings at every first start of a fresh directory; an entry that does not belong
+  inside the one-character tree still warns, with its path.
+- Tests: `[TKMG8]`, `[TKPR1]`, `[TKPR2]`, `[TKUR1]`, `[TKUR2]` (`components/storage/test/unit/accessTokensAtRest.test.js`),
+  `[CAKY3]` (cache), `[ATCL1]` to `[ATCL4]` (`components/api-server/test/access-tokens-cli.test.js`), `[SMNW1]`
+  (`storages/engines/sqlite/test/storage-migration.test.js`).
+
+### Events write methods: the read-hiding rule
+
+- `components/business/src/accesses/canReadEvent.ts`: new `isEventHiddenByGrants(access, streamIds)` (always false
+  for a personal access) = `hasStreamForbiddenForReading` (any stream for which
+  `AccessLogic.isStreamForbiddenForReading` is true) or `isOutsideForcedStreams` (the forced-streams part, moved out
+  of `canReadEvent`). `canReadEvent` uses it for those two parts; `components/api-server/src/methods/events.ts`
+  `applyPrerequisitesForUpdate` and `checkEventForDelete` (hence `events.deleteAttachment`) refuse with
+  `errors.forbidden()` before the any-one-stream `contribute` rule, through one helper `refusalForWriteById`, which
+  also answers `unknownResource` for a deletion record (`streamIds` not an array) instead of a `TypeError`, and,
+  for every access, personal included, for an event under `:_cmc:_internal` (`cmc.isCmcInternalStreamId`), matching
+  `cmcEventGetOneInternalGuard`, and under `:_delegation:_internal`
+  (`delegation.isDelegationInternalStreamId`, when `delegation:active`), matching
+  `delegationEventGetOneInternalGuard`; the delegation update / delete guards are unchanged and still refuse the rest
+  of the namespace. `events.deleteAttachment` now chains `cmcEventDeleteGuard`,
+  `sharedSecretsUpdateGuard` (the shared-secrets delete guard is a discard transition, not a refusal),
+  `emailsDeleteGuard`, `blockAccountEventDeletion` and `delegationEventsDeleteGuardHook`.
+  `isOutsideForcedStreams` groups the event's streams by store and checks each store's forced list (was: the
+  store of `streamIds[0]` only). The emails exclusion of `canReadEvent` is not applied to writes: its dedicated
+  write guards keep their own errors. HF series writes (`hfs-server`
+  `definePermissions`) and `streams.delete` are left as they were.
+- Tests in `components/api-server/test/events-single-read-exclusions.test.js`: `[WRHD]` with `[WRN1]` to `[WRN9]`
+  (`none`) and `[WRC1]` to `[WRC9]` (`create-only`): getOne, empty and content update, delete, deleteAttachment,
+  multipart file add, inherited grant, streamIds escape, batch; `[WRD1]` (deleted event); controls `[WRR1]`
+  (second stream at `read`) and `[WRP1]` (personal); `[WRFD]` with `[WRF1]` to `[WRF5]` (forced streams, the
+  access stored by the fixture); `[SRD7]` (emails item attachment), `[SRC7]` (inbox attachment), `[SRC8]`
+  (internal event 404, the inbox keeps its id), `[DLI1]` / `[DLI2]` (`[DLIW]`, delegation internal 404, root keeps
+  `delegation-managed-resource`). `components/business/test/unit/accesses-canReadEvent.test.js`
+  `[CRF1]` to `[CRF4]` (forced streams per store).
+
 ### PostgreSQL audit: records indexed by access (`audit_event_streams`)
 
 - New `storages/engines/postgresql/src/auditStreamIndex.ts`. Table `audit_event_streams (user_id, stream_id, time,
@@ -394,9 +528,9 @@
 - Storage interface: `baseStorage` goes to version 2 (`storages/interfaces/versions.ts`, the PostgreSQL and SQLite
   manifests, history in `storages/interfaces/README.md`): an engine written for version 1 keeps tokens in clear and
   has no `getTokensAtRest()`, so the boot refuses it.
-- Not in this change: the `/reg/access` polling state, pending deletion notices, the access `integrity` hash
-  (unkeyed, over the access including its token), CMC `clientData` credential URLs and backup files keep tokens as
-  they did.
+- Not in this change: CMC `clientData` credential URLs, the user-level CMC retry queue, one-time shared secrets and
+  backup files keep tokens as they did. The `/reg/access` polling state is master memory only (`cluster_kv`, never
+  on disk). The access `integrity`, pending deletion notices and deleted accesses: see the entry above.
 - Tests: `[TKPA]` (business unit, `[TKPA4]` envelope version, `[TKPA5]` optional secret), `[TKBT]` (start logic,
   same file), `[TKAR]` with
   `[TKST]`, `[TKSS]`, `[TKMG]`, `[TKTL]`, `[TKSQ]` (`components/storage/test/unit/accessTokensAtRest.test.js`, both

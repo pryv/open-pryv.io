@@ -24,7 +24,7 @@ const emailsGuards = require('business/src/emails/guards.ts');
 const { peerFetch } = require('business/src/outbound/peerFetch.ts');
 const { getDeletionNoticesLocal } = require('business/src/auth/deletionNotices.ts');
 const emailsStatus = require('business/src/emails/status.ts');
-const { canReadEvent } = require('business/src/accesses/canReadEvent.ts');
+const { canReadEvent, isEventHiddenByGrants } = require('business/src/accesses/canReadEvent.ts');
 const { isDeepStrictEqual } = require('node:util');
 const commonFns = require('./helpers/commonFunctions.ts');
 const { readStreamLimits } = require('./helpers/streamLimits.ts');
@@ -1139,6 +1139,9 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     if (!event) {
       return next(errors.unknownResource('event', params.id));
     }
+    // 0. a deletion record or an event hidden from this access
+    const refusal = await refusalForWriteById(context, event, params.id);
+    if (refusal != null) { return next(refusal); }
     // 1. check that have contributeContext on at least 1 existing streamId
     let canUpdateEvent = false;
     for (let i = 0; i < event.streamIds.length; i++) {
@@ -1457,10 +1460,20 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     return attachments.reduce((evtTotal: number, att) => evtTotal + (att.size ?? 0), 0);
   }
 
+  // Removing an attachment changes the event: it passes the refusals of
+  // events.delete (CMC inbox / internal / member records, emails container,
+  // account events, delegation namespace). For shared-secret items, whose
+  // delete guard is a lifecycle transition rather than a refusal, the update
+  // guard applies: an item cannot be modified.
   api.register(
     'events.deleteAttachment',
     commonFns.getParamsValidation(methodsSchema.deleteAttachment.params),
     checkEventForDelete,
+    cmcEventDeleteGuard,
+    sharedSecretsUpdateGuard,
+    emailsDeleteGuard,
+    blockAccountEventDeletion,
+    delegationEventsDeleteGuardHook,
     deleteAttachment
   );
 
@@ -1491,6 +1504,29 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     pubsub.notifications.emit(context.user.username, pubsub.USERNAME_BASED_EVENTS_CHANGED);
     next();
   }
+  /**
+   * The refusal for a write by id (events.update, events.delete,
+   * events.deleteAttachment) on a stored event, before any permission rule:
+   * a deletion record (it keeps no streams) is unknown; an event under the
+   * account-delegation or the CMC plugin-internal subtree is unknown to every
+   * access, personal included, as events.getOne answers it (the plugins' write guards
+   * keep their own refusals for the events the caller can see: the
+   * delegation namespace root, the CMC inbox, member records); and an event
+   * hidden from the access (a stream withholds reading, or it is outside the
+   * access's forced streams) is refused as events.getOne refuses it, whatever
+   * its other streams grant. Null when the write goes on to its own checks.
+   */
+  async function refusalForWriteById (context: MethodContext, event: { streamIds?: string[] | null }, id: string) {
+    if (!Array.isArray(event.streamIds)) return errors.unknownResource('event', id);
+    if (delegationActive && event.streamIds.some((s: string) => delegation.isDelegationInternalStreamId(s))) {
+      return errors.unknownResource('event', id);
+    }
+    if (event.streamIds.some((s: string) => cmc.isCmcInternalStreamId(s))) {
+      return errors.unknownResource('event', id);
+    }
+    if (await isEventHiddenByGrants(context.access, event.streamIds)) return errors.forbidden();
+    return null;
+  }
   async function checkEventForDelete (context: MethodContext, params: EventsDeleteParams | EventsDeleteAttachmentParams, result: EventsDeleteResult | EventsDeleteAttachmentResult, next: MethodNext) {
     const eventId = params.id;
     let event;
@@ -1502,6 +1538,9 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     if (event == null) {
       return next(errors.unknownResource('event', eventId));
     }
+    // a deletion record or an event hidden from this access
+    const refusal = await refusalForWriteById(context, event, eventId);
+    if (refusal != null) { return next(refusal); }
     let canDeleteEvent = false;
     for (const streamId of event.streamIds) {
       if (await context.access.canUpdateEventsOnStream(streamId)) {

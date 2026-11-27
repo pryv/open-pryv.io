@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+### Events: write methods refuse an event the access cannot read
+
+- `events.update`, `events.delete` and `events.deleteAttachment` now refuse an event that `events.getOne` hides from
+  the access: one of its streams is held at `none` or `create-only` (own grant or inherited), even when another of
+  its streams grants `contribute`; or, for an access migrated from v1 that carries forced streams, the event is
+  outside them. The refusal is the error `events.getOne` gives for that event (`403 forbidden`).
+- Behaviour change: an app or shared access that could update, trash or delete such an event, or remove one of its
+  attachments, now gets that error and the event is left as it was. Personal accesses are unchanged, and so are
+  events whose streams are each readable to the access or covered by none of its grants.
+- `events.update`, `events.delete` and `events.deleteAttachment` on the id of a deleted event now answer
+  `404 unknown-resource` (they could fail with an internal error).
+- `events.update`, `events.delete` and `events.deleteAttachment` on an event of the CMC plugin-internal subtree now
+  answer `404 unknown-resource` to every access, personal included, as `events.getOne` does (was `403` with
+  `cmc-protected-event-write` for an app or shared access; a personal access could update or delete it). Events the
+  caller can see (the CMC inbox, a group's member records) keep the `403 cmc-protected-event-write` refusal.
+- `events.update`, `events.delete` and `events.deleteAttachment` on an event of the account-delegation internal
+  subtree now answer `404 unknown-resource` to every access, personal included, as `events.getOne` does (was
+  `400 delegation-managed-resource`). An event on the namespace root, which those accesses can read, keeps
+  `delegation-managed-resource`.
+- `events.deleteAttachment` now applies the refusals of `events.delete`: an attachment of a CMC inbox, internal or
+  member-record event cannot be removed by an app or shared access (`cmc-protected-event-write`), nor one of an
+  emails container item (`emails-reserved-stream`, personal token included), an account event or an
+  account-delegation event; a shared-secret item cannot be modified (`shared-secret-immutable`).
+- Forced streams (accesses migrated from v1) are judged in every store an event's streams belong to, not only the
+  store of its first stream, on reads and writes alike.
+- Unchanged, by design: a producer holding `create-only` or `contribute` on one of a series event's streams may still
+  append HF points to it even when it cannot read the event (no event content is returned); and `streams.delete`,
+  which requires `manage` on the whole deleted subtree, still removes those streams from (or merges into the parent)
+  the events that also sit in a stream the access cannot read.
+
 ### PostgreSQL audit: reading one access's audit trail no longer walks the account's trail (operator notice)
 
 - Every app token may read the audit trail of its own access (`events.get` on `:_audit:access-<its id>`). On the
@@ -223,17 +253,43 @@ errors, no forced sign-in. What changes is how the core stores them, and what an
 roll back or change a key.
 
 - **Stored form.** Every access token and personal session id is stored as a keyed hash (HMAC-SHA256, the only
-  lookup key) plus an encrypted copy (AES-256-GCM, opened when the access is read). A database dump or a stolen
-  data file no longer holds a server-generated token in clear. Limit: while access integrity is active
-  (`integrity.isActive.accesses`, on by default), each access row also stores `integrity`, an unkeyed hash of the
-  access including its token, next to every other field it covers; a low-entropy token chosen by a caller, or a
-  short legacy one, can still be tested offline against it from a dump. Server-generated tokens are out of reach
-  of such a test. The keys derive from the new optional **`auth.accessTokensKey`**
+  lookup key) plus an encrypted copy (AES-256-GCM, opened when the access is read). The stored `integrity` of an
+  access (an unkeyed hash of the access, its token included, which would let a short token chosen by a caller or a
+  legacy one be tested offline) is sealed the same way in its column and opened when the access is read: the API,
+  backups and `bin/integrity-check.js` see the same `ACCESS:0:...` value as before. A database dump or a stolen
+  data file no longer holds a token in clear, nor a value to test a guessed token against, whoever chose the
+  token. The keys derive from the new optional **`auth.accessTokensKey`**
   (base64, 32 bytes; SECRET, YAML only; a placeholder value refuses the boot) when set, else from
   `auth.adminAccessKey`. Nothing to configure on an existing platform. The keys never enter the database.
+- **Deleted accesses keep no token.** The deletion record of an access, and the earlier versions (history rows) of
+  a deleted access, no longer keep its token: it is dropped at deletion, and the first start drops it from the
+  accesses deleted before the upgrade. The `integrity` of a deletion record is computed without it and now
+  verifies on the record the API returns (which never carried the token). A backup restored from before this
+  release loses the token of its deleted accesses at restore. `bin/hfs-author-scrub.js` maps the tokens of live
+  and deleted accesses to repair the authors of high-frequency series written before 2.0.0-rc.40: a core that
+  upgrades from an earlier release and never ran it must run it with this image **before the first start** (the
+  start drops the tokens of deleted accesses; afterwards the tool resolves live accesses only). With access integrity
+  off (`integrity.isActive.accesses: false`), a deletion record keeps the integrity value it had (computed with the
+  token, it no longer verifies): the integrity check reports such records if integrity is switched on again.
+- **Audit records of access writes carry the key only.** The audit record of `accesses.create` named the access by
+  `content.record.key` and also copied its `integrity` hash in `content.record.integrity`: the hash is no longer
+  written, and the first start removes it from the records already stored, in whichever engine holds the audit
+  (`storages.audit.engine`, SQLite by default, whatever the base engine). SQLite: one walk over the users' audit
+  databases, each changed database vacuumed, recorded by a marker file `audit-access-integrity-scrubbed.done` in
+  the users directory. PostgreSQL: one statement over `audit_events` (migration `20261127_120500`; the first run
+  scans the table to build the index `idx_audit_access_integrity`, which stays empty, so the same statement run at
+  every start costs nothing). After a rollback, the next start of this image also scrubs the records the earlier
+  image wrote meanwhile. The breach-scope report shows such a write with its key only. Syslog lines already sent
+  and audit exports or backups taken before the upgrade still carry the hash.
+- **Pending deletion notices.** The endpoint of a revoke notice to a peer platform, kept by the core while an
+  account is erased and the peer could not be reached (it holds a token of an access on the peer), is sealed the
+  same way while the notice is pending; once delivered or given up it is stored without the token, as before. A
+  notice whose stored endpoint does not open is given up unsent (reason `cmc-notice-credential-unreadable`).
 - **First start of this release.** Before the workers start, every stored token is converted in place: live,
-  deleted and history accesses, and sessions (expired sessions are removed). One HMAC, one encryption and one row
-  update per access; on PostgreSQL it is a migration. With `migrations.autoRunOnStart: false` the core refuses to
+  deleted and history accesses, and sessions (expired sessions are removed), every stored access `integrity` is
+  sealed and every pending deletion notice too. One HMAC, two encryptions and one row update per access; on
+  PostgreSQL it is a migration (tokens first, then the integrity values once their indexes exist). With `migrations.autoRunOnStart: false`, integrity values alone waiting for the
+  conversion only warn (lookups do not use them). With `migrations.autoRunOnStart: false` the core refuses to
   start while stored tokens wait for the conversion (they could not be looked up): run `node bin/migrate.js up`,
   then start. On SQLite the user databases are walked once (a marker file `accesses-token-protected.done` in the
   users directory records it) and any database the walk missed is converted at its first use. The same pass runs
@@ -252,7 +308,8 @@ roll back or change a key.
   `auth.adminAccessKey` value). Cores of one platform may use different values of `auth.accessTokensKey`.
 - **Rollback to an earlier image.** An earlier image cannot read the new stored form: every token would be
   rejected. Before starting it, with this image and the core stopped, run `node bin/access-tokens.js unprotect
-  --yes` (writes the clear tokens and session ids back and restores the clear-token index), then start the earlier
+  --yes` (writes the clear tokens, session ids, access integrity values and notice endpoints back and restores
+  the clear-token index; the tokens dropped from deleted accesses stay dropped), then start the earlier
   image without starting this one again. The tools of this image (`status`, `bin/backup.js`, ...) leave the rows
   in clear after `unprotect` (on SQLite a marker file `accesses-token-unprotected` records it until the next start
   of this image); `bin/migrate.js up` is a start and converts them. If `unprotect` stops because live accesses
@@ -261,18 +318,31 @@ roll back or change a key.
   opened meanwhile included). Several cores sharing one PostgreSQL database must be upgraded together.
 - **Old clear copies.** The upgrade cannot reach copies made before it: database dumps and backups taken earlier
   (treat them as credential stores), and, until vacuum, the old row versions in the data files. On PostgreSQL run
-  `VACUUM (FULL) accesses, sessions;` once after the upgrade if the old values must be gone from the data files
-  (it locks both tables while it runs). On SQLite the first start vacuums each user database it converts and the
-  shared database (a database converted later, at its first use, is not: run `VACUUM` on it). Backups made by
+  `VACUUM (FULL) accesses, sessions, cmc_deletion_notices;` once after the upgrade if the old values must be gone
+  from the data files (it locks those tables while it runs), and `VACUUM (FULL) audit_events;` for the old
+  integrity copies of the audit records (a large table: plan the lock). On SQLite the first start vacuums each user
+  database it converts, each audit database it scrubs and the shared database (a database converted later, at its
+  first use, is not, nor is the deletion-notice database: run `VACUUM` on them if the old copies must be gone).
+  Backups made by
   `bin/backup.js` still hold the tokens in clear (they restore on a core with another key): encrypt them. A
   PostgreSQL server that logs statement parameters (`log_statement = 'all'` or `'mod'`, with the default
   `log_parameter_max_length`) records in its log the clear tokens bound by the one-time conversion and by
   `unprotect`: turn that logging off for the upgrade, or purge those log files after it.
-- **Not in this change.** Credentials held elsewhere in the stores stay in clear: the access `integrity` hash
-  above, the `apiEndpoint` (token included) of a pending deletion notice to a peer core, and the credential URLs
-  CMC peers keep in an access's `clientData`.
+- **Not in this change.** Credentials held elsewhere in the stores stay in clear: the credential URLs CMC peers
+  keep in an access's `clientData` (for the life of the relationship), the retry queue of an account's CMC
+  deliveries (up to about 30 hours), and a token handed over through a one-time shared secret until it is
+  consumed or read after its expiry.
 - **`bin/access-tokens.js status`** (read-only): counts of rows in clear, under the configured key, and under other
-  keys.
+  keys, for tokens, sessions, access integrity values (`accessIntegrity`) and pending notice endpoints
+  (`deletionNotices`). `rekey` and `unprotect` cover them too. `rekey` goes on past an integrity value that does
+  not open under its previous key (damaged), names it (user id, access id) and exits 2: set that row's `integrity`
+  to NULL, core stopped, then start (the integrity check reports it as "missing integrity property"). A pending
+  deletion notice under a key `rekey` was not given is not refused at start: it is given up unsent.
+- **`bin/integrity-check.js`** reports an access whose stored token does not open (copied from a core with another
+  key, or damaged) as an error of its user, "integrity not verifiable", and checks the others; API reads of that
+  access still fail. An access whose stored integrity does not open (damaged, or copied from another account) is
+  read without it and reported as "missing integrity property". On PostgreSQL the migrations of this release also
+  add small indexes so the checks of every start, and the token drop of each deletion, read no whole table.
 
 ### Operators (PostgreSQL): the unindexed-user guard locks per account instead of on the index row
 
