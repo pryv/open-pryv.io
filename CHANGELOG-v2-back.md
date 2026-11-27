@@ -21,13 +21,21 @@
 - `localUserEventsPG.ts` `buildEventQuery` and `UserAuditDatabasePG.ts` `buildSelectQuery`: when the last sort key
   is `time`, the sort ends with `id` (`eventid` for audit) in the same direction. Equal-time rows used to come back
   in scan order, which differs between plans (top-N heap sort, full sort, backward index scan), so `skip` pages
-  could repeat or miss rows. Tests `[EGLT1]` (now on PostgreSQL too) and `[PGTI5]` (audit pages); both fail with
-  the tie-breaker disabled.
+  could repeat or miss rows. Tests `[EGLT1]` (now on PostgreSQL too, 48 events over 6 times), `[EGLT2]` (the same
+  on PostgreSQL with the time index dropped, so the planner sorts) and `[PGTI5]` (audit pages, plain and streamed,
+  with and without the index). With the index present, a backward index scan hands ties over in index order and
+  hides a missing tie-breaker; `[EGLT2]` and the no-index `[PGTI5]` cases fail with the tie-breaker disabled.
 - New `src/timeIdIndexes.ts` + migration `20261127_130000_time_id_indexes.js`: `idx_event_time_id` /
-  `idx_audit_time_id` built `CONCURRENTLY` (an invalid leftover is dropped and built again), then
-  `idx_event_time` / `idx_audit_time` dropped `CONCURRENTLY` (same leading columns: every use of the old index is
-  served by the new one). The schema DDL builds the new indexes only on a database holding neither them nor the
-  old ones (fresh), so a boot never builds them without `CONCURRENTLY`. Tests `[PGTI1]` to `[PGTI4]`.
+  `idx_audit_time_id` built `CONCURRENTLY` (an invalid leftover, or an index of that name with other columns, is
+  dropped and built again; one being built by another session stops the run), then `idx_event_time` /
+  `idx_audit_time` dropped `CONCURRENTLY` (same leading columns: every use of the old index is served by the new
+  one). The whole run holds a session advisory lock of its own on one dedicated client (an index being built
+  concurrently reads as invalid, so two unserialized runs could drop each other's build and leave a table with no
+  time index), with `statement_timeout` and `lock_timeout` at 0 for the run (reset before the client goes back),
+  and logs before each build. The schema DDL builds the new indexes only on a database holding neither them nor
+  the old ones (fresh), so a boot never builds them without `CONCURRENTLY`. Tests `[PGTI1]` to `[PGTI4]`,
+  `[PGTI6]` (two runs at once: each index built once, a third connection sees a valid time index at every look;
+  fails with the lock removed), `[PGTI7]` (new index present, old one only dropped), `[PGTI8]` (other columns).
 - Measured on 1 million events and 1 million audit records (5 users, 20 rows per time value, 50 streams), median
   of 7, before (time sort, `(user_id, time)`) / after (time + id sort, `(user_id, time, id)`): one stream limit 20
   17.0 / 15.5 ms; one stream limit 500 109.6 / 110.5 ms; two streams + time frame limit 20 12.6 / 11.1 ms; skip 5000

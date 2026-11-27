@@ -15,12 +15,13 @@
  * src/timeIdIndexes.ts.
  *
  * Idempotent: a valid index is kept, an invalid one (a build that failed) is
- * built again.
+ * built again. Two runs at once are serialized by an advisory lock: the
+ * second waits, then finds the index built.
  */
 module.exports = {
   async up (context) {
     const { ensureTimeIdIndexes } = require('../src/timeIdIndexes.ts');
-    const res = await ensureTimeIdIndexes(context.db);
+    const res = await ensureTimeIdIndexes(context.db, { logger: context.logger });
     for (const r of res) {
       context.logger?.info?.('time sort index ' + r.name + ': ' + (r.built ? 'built' : 'present') +
         (r.droppedPrevious ? ', previous index dropped' : '') + ' (' + r.durationMs + ' ms)');

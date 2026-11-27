@@ -142,40 +142,131 @@ describe('[PGTI] PostgreSQL time sort indexes', function () {
     }
   });
 
-  for (const sortAscending of [false, true]) {
-    it(`[PGTI5] audit pages over equal times read with skip neither repeat nor miss a record (${sortAscending ? 'oldest' : 'newest'} first)`, async function () {
-      const storage = new AuditStoragePG(db);
-      await storage.init();
-      const user = await storage.forUser(userId);
-      const TIED = 24;
-      for (let i = 0; i < TIED; i++) {
-        await user.createEvent({
-          id: 'pgti-r' + String(i).padStart(2, '0'),
-          streamIds: [':_audit:access-a', ':_audit:action-x'],
-          type: 'audit-log/pryv-api',
-          time: 2000 + Math.floor(i / 4),
-          created: 1,
-          createdBy: 'system',
-          modified: 1,
-          modifiedBy: 'system',
-          trashed: false,
-          content: { action: 'x', i }
-        });
+  it('[PGTI6] two runs at once build each index once and never leave a table without a time index', async function () {
+    // Enough rows for each build to last while the other run looks at it.
+    await db.query(`INSERT INTO events (user_id, id, stream_ids, type, time, created, modified)
+      SELECT $1, 'pgti6-e' || g, '["s"]', 'note/txt', g / 10, 0, 0 FROM generate_series(1, 200000) g`, [userId]);
+    await db.query(`INSERT INTO audit_events (user_id, eventid, stream_ids, type, time, created, modified)
+      SELECT $1, 'pgti6-a' || g, ':_audit:x', 'audit-log/pryv-api', g / 10, 0, 0 FROM generate_series(1, 200000) g`, [userId]);
+    await db.query('DROP INDEX IF EXISTS idx_event_time_id');
+    await db.query('DROP INDEX IF EXISTS idx_audit_time_id');
+    await db.query(OLD.events);
+    await db.query(OLD.audit_events);
+
+    // From a third connection, while both runs go on: at least one valid time
+    // index per table at every look.
+    const VALID_TIME_INDEXES = `SELECT
+      (SELECT count(*)::int FROM pg_index WHERE indisvalid AND indexrelid IN (to_regclass('idx_event_time'), to_regclass('idx_event_time_id'))) AS events,
+      (SELECT count(*)::int FROM pg_index WHERE indisvalid AND indexrelid IN (to_regclass('idx_audit_time'), to_regclass('idx_audit_time_id'))) AS audit`;
+    const watch = { running: true };
+    let looks = 0;
+    const gaps = [];
+    const watcher = (async () => {
+      while (watch.running) {
+        const { rows } = await db.query(VALID_TIME_INDEXES);
+        looks++;
+        if (rows[0].events < 1 || rows[0].audit < 1) gaps.push(rows[0]);
+        await new Promise((resolve) => setTimeout(resolve, 5));
       }
-      const sort = { time: sortAscending ? 1 : -1 };
-      const all = (await user.getEvents({ query: [], options: { sort, limit: TIED } })).map((e) => e.id);
-      assert.strictEqual(new Set(all).size, TIED);
-      for (const limit of [3, 5, 7]) {
-        const paged = [];
-        for (let skip = 0; skip < TIED; skip += limit) {
-          const page = await user.getEvents({ query: [], options: { sort, limit, skip } });
-          paged.push(...page.map((e) => e.id));
+    })();
+    let results;
+    try {
+      results = await Promise.all([migration.up({ db }), migration.up({ db })]);
+    } finally {
+      watch.running = false;
+      await watcher;
+    }
+    assert.deepStrictEqual(gaps, [], 'a table had no valid time index during the runs (' + looks + ' looks)');
+    for (const [i, name] of ['idx_event_time_id', 'idx_audit_time_id'].entries()) {
+      assert.strictEqual(results.filter((r) => r[i].name === name && r[i].built).length, 1, name + ' built by exactly one run');
+      assert.strictEqual((await definition(name)).valid, true);
+    }
+    assert.strictEqual(await definition('idx_event_time'), null);
+    assert.strictEqual(await definition('idx_audit_time'), null);
+  });
+
+  it('[PGTI7] a database holding the new index already and the previous one only loses the previous one', async function () {
+    // The state after a crash between build and drop, or after the new index
+    // was built by hand before the upgrade.
+    await insertRows(8);
+    await db.query(OLD.events);
+    await db.query(OLD.audit_events);
+    const res = await migration.up({ db });
+    assert.deepStrictEqual(res.map((r) => [r.name, r.built, r.droppedPrevious]),
+      [['idx_event_time_id', false, true], ['idx_audit_time_id', false, true]]);
+    assert.strictEqual(await definition('idx_event_time'), null);
+    assert.strictEqual(await definition('idx_audit_time'), null);
+    assert.strictEqual((await definition('idx_event_time_id')).valid, true);
+  });
+
+  it('[PGTI8] an index of the new name with other columns is built again before the previous one is dropped', async function () {
+    await insertRows(8);
+    await db.query('DROP INDEX IF EXISTS idx_event_time_id');
+    await db.query(OLD.events);
+    await db.query('CREATE INDEX idx_event_time_id ON events(user_id, time)');
+    const res = await migration.up({ db });
+    assert.deepStrictEqual([res[0].name, res[0].built, res[0].droppedPrevious], ['idx_event_time_id', true, true]);
+    assert.match((await definition('idx_event_time_id')).def, /ON public\.events USING btree \(user_id, "time", id\)$/);
+    assert.strictEqual(await definition('idx_event_time'), null);
+  });
+
+  async function readStreamed (user, options) {
+    const ids = [];
+    for await (const e of user.getEventsStreamed({ query: [], options })) ids.push(e.id);
+    return ids;
+  }
+
+  for (const withIndex of [true, false]) {
+    for (const sortAscending of [false, true]) {
+      it(`[PGTI5] audit pages over equal times read with skip neither repeat nor miss a record (${sortAscending ? 'oldest' : 'newest'} first, ${withIndex ? 'served by the index' : 'sorted by the planner'})`, async function () {
+        const storage = new AuditStoragePG(db);
+        await storage.init();
+        const user = await storage.forUser(userId);
+        const TIED = 48;
+        const PER_TIME = 8;
+        for (let i = 0; i < TIED; i++) {
+          // Ids inserted in an order unrelated to their own order.
+          const n = (i * 29) % TIED;
+          await user.createEvent({
+            id: 'pgti-r' + String(n).padStart(2, '0'),
+            streamIds: [':_audit:access-a', ':_audit:action-x'],
+            type: 'audit-log/pryv-api',
+            time: 2000 + Math.floor(i / PER_TIME),
+            created: 1,
+            createdBy: 'system',
+            modified: 1,
+            modifiedBy: 'system',
+            trashed: false,
+            content: { action: 'x', i }
+          });
         }
-        assert.deepStrictEqual(paged, all, 'limit ' + limit);
-      }
-      // Ties come back in id order, in the direction of the time sort.
-      const firstGroup = all.slice(0, 4);
-      assert.deepStrictEqual(firstGroup, [...firstGroup].sort((a, b) => sortAscending ? (a < b ? -1 : 1) : (a < b ? 1 : -1)));
-    });
+        if (!withIndex) {
+          // No time index: the planner sorts, the order of ties is then the
+          // sort's own unless the sort ends with the id. afterEach rebuilds it.
+          await db.query('DROP INDEX IF EXISTS idx_audit_time_id');
+          await db.query('DROP INDEX IF EXISTS idx_audit_time');
+        }
+        const sort = { time: sortAscending ? 1 : -1 };
+        const all = (await user.getEvents({ query: [], options: { sort, limit: TIED } })).map((e) => e.id);
+        assert.strictEqual(new Set(all).size, TIED);
+        assert.deepStrictEqual(await readStreamed(user, { sort, limit: TIED }), all, 'streamed');
+        for (const limit of [3, 5, 7, 11]) {
+          const paged = [];
+          const pagedStreamed = [];
+          for (let skip = 0; skip < TIED; skip += limit) {
+            const page = await user.getEvents({ query: [], options: { sort, limit, skip } });
+            paged.push(...page.map((e) => e.id));
+            pagedStreamed.push(...await readStreamed(user, { sort, limit, skip }));
+          }
+          assert.deepStrictEqual(paged, all, 'limit ' + limit);
+          assert.deepStrictEqual(pagedStreamed, all, 'streamed, limit ' + limit);
+        }
+        // Ties come back in id order, in the direction of the time sort.
+        for (let g = 0; g < TIED; g += PER_TIME) {
+          const group = all.slice(g, g + PER_TIME);
+          assert.deepStrictEqual(group, [...group].sort((a, b) => sortAscending ? (a < b ? -1 : 1) : (a < b ? 1 : -1)), 'group at ' + g);
+        }
+      });
+    }
   }
 });
