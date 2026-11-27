@@ -244,8 +244,8 @@ warning per boot and keeps verification off until you fill them in. Set
 warning; set it to `true` explicitly and the page URL becomes required at boot.
 
 Each mail has its own switch, `services.email.send<Mail>` (`sendWelcome`,
-`sendResetPassword`, `sendVerifyEmail`, `sendMfaChange`, `sendExternalIdReleased`,
-the `sendAccountDeletion...` and `sendAccountTransfer...` ones), all `true` by
+`sendResetPassword`, `sendVerifyEmail`, `sendMfaChange`, `sendExternalIdReleased` and
+the `sendAccountDeletion...` ones), all `true` by
 default; `services.email.enabled: false` turns every mail off whatever they say.
 The list with each mail's meaning is in `config/default-config.yml`. Earlier
 releases kept the switches as sub-keys of `services.email.enabled`: a
