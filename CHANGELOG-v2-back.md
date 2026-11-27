@@ -22,8 +22,15 @@
   such an access as an error ("integrity not verifiable") and goes on with the others, and a SQLite user database
   under another key as an error of that user. Lookups and the plain `exportAll` still fail closed.
   `BaseStorageSQLite._userDbAnd` is now protected.
+- `bin/access-tokens.js` accepts `--config <file>` like `bin/master.js` and `bin/integrity-check.js` (a missing file
+  is refused before boiler init, which would skip it silently); it was refused as an unknown argument.
+- SQLite per-user audit layout migration (`userSQLite/migrations/index.ts`, `foreachUserDirectory`, now exported):
+  the shared files of the users base directory (users index, shared database, markers) are logged at debug, no
+  longer as `Skipping no 1 char...` warnings at every first start of a fresh directory; an entry that does not belong
+  inside the one-character tree still warns, with its path.
 - Tests: `[TKMG8]`, `[TKPR1]`, `[TKPR2]`, `[TKUR1]`, `[TKUR2]` (`components/storage/test/unit/accessTokensAtRest.test.js`),
-  `[CAKY3]` (cache).
+  `[CAKY3]` (cache), `[ATCL1]` to `[ATCL4]` (`components/api-server/test/access-tokens-cli.test.js`), `[SMNW1]`
+  (`storages/engines/sqlite/test/storage-migration.test.js`).
 
 ### Events write methods: the read-hiding rule
 

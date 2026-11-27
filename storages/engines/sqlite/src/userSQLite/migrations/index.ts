@@ -17,7 +17,7 @@ const { UserDatabase } = require('../UserDatabase.ts');
 const { migrateUserDB: migrate0to1 } = require('./1.ts');
 const logger = _internals.lazyLogger('sqlite-storage-migration');
 
-export { migrateUserDBsIfNeeded };
+export { migrateUserDBsIfNeeded, foreachUserDirectory };
 
 type StorageLike = {
   getVersion: () => number | string;
@@ -89,15 +89,22 @@ async function foreachUserDirectory (asyncCallBack: (uid: string, path: string) 
     const fileNames: string[] = fs.readdirSync(loopPath);
 
     for (const fileName of fileNames) {
-      if (tail.length < 3 && fileName.length !== 1) { logger.warn('Skipping no 1 char' + fileName); continue; }
       const myDirPath = path.join(loopPath, fileName);
-      if (!fs.statSync(myDirPath).isDirectory()) { logger.warn('Skipping File' + fileName); continue; }
+      // The base directory also holds the shared files of every engine (users
+      // index, shared database, markers): expected, not worth a warning. Below
+      // it, only the one-character levels and the user directories belong.
+      const unexpected = (reason: string): void => {
+        if (tail === '') logger.debug('Skipping ' + reason + ': ' + myDirPath);
+        else logger.warn('Skipping ' + reason + ': ' + myDirPath);
+      };
+      if (tail.length < 3 && fileName.length !== 1) { unexpected('a name that is not one character'); continue; }
+      if (!fs.statSync(myDirPath).isDirectory()) { unexpected('a file'); continue; }
       const myTail = fileName + tail;
 
       if (tail.length < 3) {
         await loop(myDirPath, myTail);
       } else {
-        if (!fileName.endsWith(tail)) { logger.warn('Skipping not valid userDir' + myDirPath); continue; }
+        if (!fileName.endsWith(tail)) { logger.warn('Skipping a directory that is not a user directory: ' + myDirPath); continue; }
         await asyncCallBack(fileName, myDirPath);
       }
     }

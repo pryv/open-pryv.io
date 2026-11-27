@@ -16,6 +16,9 @@
 //   node bin/access-tokens.js status
 //   node bin/access-tokens.js rekey --previous-key-file <path>
 //   node bin/access-tokens.js unprotect --yes
+//
+// A core started with `--config <file>` runs this tool with the same
+// `--config <file>`, so it reads and writes that core's own storage with its keys.
 
 const path = require('path');
 const fs = require('fs');
@@ -48,6 +51,8 @@ Commands:
 Flags:
   --previous-key-file <path>   (rekey) file holding the previous key value
   --yes                        (unprotect) confirm
+  --config <file>              the configuration file the core is started with
+                               (as for bin/master.js)
   -h, --help                   print this help
 `;
 
@@ -55,6 +60,20 @@ const argv = process.argv.slice(2);
 if (argv.includes('--help') || argv.includes('-h')) {
   process.stdout.write(USAGE);
   process.exit(0);
+}
+
+// Boiler loads a `--config <file>` itself, above every other scope, as for
+// `bin/master.js`; the extra scope below mirrors `bin/integrity-check.js`.
+const configFileArg = (() => {
+  const i = argv.indexOf('--config');
+  return i !== -1 && argv[i + 1] != null ? argv[i + 1] : null;
+})();
+// Boiler silently skips a missing file: refuse instead of acting on the wrong storage or key.
+if (argv.includes('--config') &&
+    (configFileArg == null || configFileArg.startsWith('-') ||
+     !fs.existsSync(path.resolve(process.cwd(), configFileArg)))) {
+  console.error(`--config: file not found: ${configFileArg ?? '(missing <file>)'}`);
+  process.exit(1);
 }
 
 require('@pryv/boiler').init({
@@ -68,7 +87,9 @@ require('@pryv/boiler').init({
     pluginAsync: require('../config/plugins/systemStreams')
   }, {
     plugin: require('../config/plugins/core-identity')
-  }]
+  }, ...(configFileArg != null
+    ? [{ scope: 'host-config', file: path.resolve(process.cwd(), configFileArg) }]
+    : [])]
 });
 
 (async () => {
@@ -132,6 +153,7 @@ function parseArgs (list) {
   for (let i = 0; i < list.length; i++) {
     const a = list[i];
     if (a === '--yes') out.yes = true;
+    else if (a === '--config') i++; // read before boiler init
     else if (a === '--previous-key-file') {
       out.previousKeyFile = list[++i];
       if (out.previousKeyFile == null) throw new Error('--previous-key-file requires a path');
