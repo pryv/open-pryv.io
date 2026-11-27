@@ -24,7 +24,7 @@ const emailsGuards = require('business/src/emails/guards.ts');
 const { peerFetch } = require('business/src/outbound/peerFetch.ts');
 const { getDeletionNoticesLocal } = require('business/src/auth/deletionNotices.ts');
 const emailsStatus = require('business/src/emails/status.ts');
-const { canReadEvent } = require('business/src/accesses/canReadEvent.ts');
+const { canReadEvent, hasStreamForbiddenForReading } = require('business/src/accesses/canReadEvent.ts');
 const { isDeepStrictEqual } = require('node:util');
 const commonFns = require('./helpers/commonFunctions.ts');
 const { readStreamLimits } = require('./helpers/streamLimits.ts');
@@ -1139,6 +1139,11 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     if (!event) {
       return next(errors.unknownResource('event', params.id));
     }
+    // 0. an event hidden from this access (one of its streams withholds
+    // reading) is refused as events.getOne refuses it, whatever the others grant
+    if (await hasStreamForbiddenForReading(context.access, event.streamIds ?? [])) {
+      return next(errors.forbidden());
+    }
     // 1. check that have contributeContext on at least 1 existing streamId
     let canUpdateEvent = false;
     for (let i = 0; i < event.streamIds.length; i++) {
@@ -1501,6 +1506,11 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     }
     if (event == null) {
       return next(errors.unknownResource('event', eventId));
+    }
+    // an event hidden from this access (one of its streams withholds reading)
+    // is refused as events.getOne refuses it, whatever the others grant
+    if (await hasStreamForbiddenForReading(context.access, event.streamIds ?? [])) {
+      return next(errors.forbidden());
     }
     let canDeleteEvent = false;
     for (const streamId of event.streamIds) {

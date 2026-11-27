@@ -152,6 +152,153 @@ describe('[SRDX] single-event reads apply the events.get exclusions', function (
   });
 });
 
+/**
+ * The write methods by id (events.update, events.delete,
+ * events.deleteAttachment) refuse an event the access cannot read: one with a
+ * stream held at `none` or `create-only` is refused with the same error as
+ * events.getOne, even when another of its streams grants `contribute`.
+ * Personal tokens and readable events are unchanged.
+ */
+describe('[WRHD] write methods refuse an event the access cannot read', function () {
+  this.timeout(60_000);
+
+  const ErrorIds = require('errors').ErrorIds;
+  let fixtures, username, personal, readBToken;
+  const tokenFor = {};
+
+  before(async function () {
+    await initTests();
+    await initCore();
+    fixtures = getNewFixture();
+    username = 'wrhd' + cuid().toLowerCase().slice(-10);
+    personal = cuid();
+    readBToken = cuid();
+    tokenFor.none = cuid();
+    tokenFor['create-only'] = cuid();
+    const user = await fixtures.user(username);
+    await user.access({ token: personal, type: 'personal' });
+    await user.session(personal);
+    await user.stream({ id: 'wrhd-a', name: 'A' });
+    await user.stream({ id: 'wrhd-b', name: 'B' });
+    for (const level of ['none', 'create-only']) {
+      await user.access({
+        token: tokenFor[level],
+        type: 'app',
+        permissions: [{ streamId: 'wrhd-a', level: 'contribute' }, { streamId: 'wrhd-b', level }]
+      });
+    }
+    await user.access({
+      token: readBToken,
+      type: 'app',
+      permissions: [{ streamId: 'wrhd-a', level: 'contribute' }, { streamId: 'wrhd-b', level: 'read' }]
+    });
+  });
+
+  after(async function () {
+    if (fixtures != null) {
+      try { await fixtures.clean(); } catch (_e) { /* best-effort */ }
+    }
+  });
+
+  function eventPath (id) { return '/' + username + '/events/' + id; }
+  async function createMixed () {
+    const res = await coreRequest.post('/' + username + '/events').set('Authorization', personal)
+      .send({ streamIds: ['wrhd-a', 'wrhd-b'], type: 'note/txt', content: 'original' });
+    assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+    return res.body.event;
+  }
+  async function createMixedWithFile () {
+    const res = await coreRequest.post('/' + username + '/events').set('Authorization', personal)
+      .field('event', JSON.stringify({ streamIds: ['wrhd-a', 'wrhd-b'], type: 'file/attached' }))
+      .attach('file', Buffer.from('mixed file'), { filename: 'mixed.txt', contentType: 'text/plain' });
+    assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+    return res.body.event;
+  }
+  async function storedEvent (id) {
+    const res = await coreRequest.get(eventPath(id)).set('Authorization', personal);
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    return res.body.event;
+  }
+  function assertForbidden (res) {
+    assert.strictEqual(res.status, 403, JSON.stringify(res.body));
+    assert.strictEqual(res.body.error?.id, ErrorIds.Forbidden, JSON.stringify(res.body));
+    assert.strictEqual(res.body.event, undefined, 'no event in the refusal');
+  }
+
+  const codes = {
+    none: ['WRN1', 'WRN2', 'WRN3', 'WRN4', 'WRN5'],
+    'create-only': ['WRC1', 'WRC2', 'WRC3', 'WRC4', 'WRC5']
+  };
+  for (const level of ['none', 'create-only']) {
+    const [c1, c2, c3, c4, c5] = codes[level];
+
+    it(`[${c1}] baseline: events.getOne refuses the event to a token holding the second stream at "${level}"`, async function () {
+      const ev = await createMixed();
+      assertForbidden(await coreRequest.get(eventPath(ev.id)).set('Authorization', tokenFor[level]));
+    });
+
+    it(`[${c2}] "${level}": an empty update is refused and returns no event`, async function () {
+      const ev = await createMixed();
+      assertForbidden(await coreRequest.put(eventPath(ev.id)).set('Authorization', tokenFor[level]).send({}));
+    });
+
+    it(`[${c3}] "${level}": an update with content is refused and the event is unchanged`, async function () {
+      const ev = await createMixed();
+      const res = await coreRequest.put(eventPath(ev.id)).set('Authorization', tokenFor[level])
+        .send({ content: 'changed', description: 'changed' });
+      assertForbidden(res);
+      const stored = await storedEvent(ev.id);
+      assert.strictEqual(stored.content, 'original');
+      assert.strictEqual(stored.description, undefined);
+      assert.strictEqual(stored.modified, ev.modified);
+    });
+
+    it(`[${c4}] "${level}": delete is refused; the event is neither trashed nor, once trashed, deleted`, async function () {
+      const ev = await createMixed();
+      assertForbidden(await coreRequest.delete(eventPath(ev.id)).set('Authorization', tokenFor[level]));
+      assert.ok(!(await storedEvent(ev.id)).trashed, 'not trashed');
+      const trash = await coreRequest.delete(eventPath(ev.id)).set('Authorization', personal);
+      assert.strictEqual(trash.status, 200, JSON.stringify(trash.body));
+      assertForbidden(await coreRequest.delete(eventPath(ev.id)).set('Authorization', tokenFor[level]));
+      assert.strictEqual((await storedEvent(ev.id)).trashed, true, 'still there, trashed');
+    });
+
+    it(`[${c5}] "${level}": deleteAttachment is refused and the attachment stays`, async function () {
+      const ev = await createMixedWithFile();
+      const fileId = ev.attachments[0].id;
+      assertForbidden(await coreRequest.delete(eventPath(ev.id) + '/' + fileId).set('Authorization', tokenFor[level]));
+      const stored = await storedEvent(ev.id);
+      assert.deepStrictEqual(stored.attachments.map((a) => a.id), [fileId]);
+    });
+  }
+
+  it('[WRR1] control: with the second stream at "read", update and delete are accepted', async function () {
+    const ev = await createMixed();
+    const read = await coreRequest.get(eventPath(ev.id)).set('Authorization', readBToken);
+    assert.strictEqual(read.status, 200, JSON.stringify(read.body));
+    const upd = await coreRequest.put(eventPath(ev.id)).set('Authorization', readBToken).send({ content: 'changed' });
+    assert.strictEqual(upd.status, 200, JSON.stringify(upd.body));
+    assert.strictEqual(upd.body.event.content, 'changed');
+    const del = await coreRequest.delete(eventPath(ev.id)).set('Authorization', readBToken);
+    assert.strictEqual(del.status, 200, JSON.stringify(del.body));
+    assert.strictEqual(del.body.event.trashed, true);
+  });
+
+  it('[WRP1] control: a personal token updates, trashes and deletes the same event', async function () {
+    const ev = await createMixedWithFile();
+    const upd = await coreRequest.put(eventPath(ev.id)).set('Authorization', personal).send({ description: 'mine' });
+    assert.strictEqual(upd.status, 200, JSON.stringify(upd.body));
+    const att = await coreRequest.delete(eventPath(ev.id) + '/' + ev.attachments[0].id).set('Authorization', personal);
+    assert.strictEqual(att.status, 200, JSON.stringify(att.body));
+    const trash = await coreRequest.delete(eventPath(ev.id)).set('Authorization', personal);
+    assert.strictEqual(trash.status, 200, JSON.stringify(trash.body));
+    assert.strictEqual(trash.body.event.trashed, true);
+    const del = await coreRequest.delete(eventPath(ev.id)).set('Authorization', personal);
+    assert.strictEqual(del.status, 200, JSON.stringify(del.body));
+    assert.strictEqual(del.body.eventDeletion.id, ev.id);
+  });
+});
+
 describe('[SRCU] CMC protections on events.update and internal writes', function () {
   this.timeout(60_000);
 

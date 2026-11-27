@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Events: write methods refuse an event the access cannot read
+
+- `events.update`, `events.delete` and `events.deleteAttachment` now refuse an event that `events.getOne` hides from
+  the access: one of its streams is held at `none` or `create-only` (own grant or inherited), even when another of
+  its streams grants `contribute`. The refusal is the error `events.getOne` gives for that event (`403 forbidden`).
+- Behaviour change: an app or shared access that could update, trash or delete such an event, or remove one of its
+  attachments, now gets that error and the event is left as it was. Personal accesses are unchanged, and so are
+  events whose streams are each readable to the access or covered by none of its grants.
+
 ### Access tokens and session ids no longer stored in clear (operator notice)
 
 Nothing changes for clients: the same tokens, the same `token` and `apiEndpoint` in every response, the same

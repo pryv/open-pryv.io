@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Events write methods: the read-hiding rule
+
+- `components/business/src/accesses/canReadEvent.ts`: new `hasStreamForbiddenForReading(access, streamIds)` (any
+  stream for which `AccessLogic.isStreamForbiddenForReading` is true; always false for a personal access), used by
+  `canReadEvent` for its forbidden-stream part and by `components/api-server/src/methods/events.ts`:
+  `applyPrerequisitesForUpdate` and `checkEventForDelete` (hence `events.deleteAttachment`) refuse with
+  `errors.forbidden()` before the any-one-stream `contribute` rule. The emails and plugin-internal exclusions of
+  `canReadEvent` are not applied there: their dedicated write guards keep their own errors.
+- Tests `[WRN1]` to `[WRN5]` (`none`), `[WRC1]` to `[WRC5]` (`create-only`), controls `[WRR1]` (second stream at
+  `read`) and `[WRP1]` (personal), in `components/api-server/test/events-single-read-exclusions.test.js` (`[WRHD]`).
+
 ### Access tokens and session ids at rest: keyed hash plus encrypted copy
 
 - `components/business/src/accesses/tokenProtection.ts`: the protection object injected at storage init (contract in
