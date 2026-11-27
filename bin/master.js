@@ -387,19 +387,13 @@ if (cluster.isPrimary) {
     try {
       const storagesBarrel = require('../storages/index.ts');
       const coreId = String(config.get('core:id') ?? 'single');
-      const { runSetupBoot } = require('../components/business/src/admin/setupBoot.ts');
+      const { runSetupBoot, platformInUseOf } = require('../components/business/src/admin/setupBoot.ts');
       await runSetupBoot({
         db: storagesBarrel.platformDB,
         config,
         coreId,
         joining: bootstrapArgs.enabled === true,
-        platformInUse: async () => {
-          const local = await storagesBarrel.usersLocalIndex.getAllByUsername();
-          if (Object.keys(local).length > 0) return true;
-          if ((await storagesBarrel.platformDB.listPlatformKvKeys('user-core/')).length > 0) return true;
-          const cores = await storagesBarrel.platformDB.getAllCoreInfos();
-          return cores.some((c) => c != null && c.id !== coreId);
-        },
+        platformInUse: platformInUseOf(storagesBarrel, coreId),
         configDir: setupCodeDir(process.argv.slice(2)),
         log,
         warn,

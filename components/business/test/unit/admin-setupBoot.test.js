@@ -39,6 +39,7 @@ function memoryStore () {
     async getPlatformKv (k) { return kv.has(k) ? kv.get(k) : null; },
     async setPlatformKv (k, v) { kv.set(k, v); },
     async setPlatformKvIfAbsent (k, v) { if (kv.has(k)) return false; kv.set(k, v); return true; },
+    async replacePlatformKvIfValue (k, expected, next) { if (kv.get(k) !== expected) return false; if (next == null) kv.delete(k); else kv.set(k, next); return true; },
     async deletePlatformKv (k) { kv.delete(k); },
     async listPlatformKvEntries (prefix) { return [...kv].filter(([k]) => k.startsWith(prefix)).map(([key, value]) => ({ key, value })); },
     async setAccessState (k, value, expiresAt) { states.set(k, JSON.parse(JSON.stringify({ value, expiresAt }))); },

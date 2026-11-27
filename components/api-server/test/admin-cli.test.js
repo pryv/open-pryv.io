@@ -99,6 +99,22 @@ describe('[ADMC] bin/admin.js', function () {
     assert.strictEqual(runCli(['setup-code', '--new']).status, 1, 'nothing to replace once ready');
   });
 
+  it('[ADMC6] setup finish: ready without a first administrator; a second run says so', async () => {
+    assert.strictEqual(await setup.claimFreshPending(db, { coreId, now: Date.now() }), true);
+    const pendingCode = await setup.mintSetupCode(db, { coreId, ttlMs: 3600000, now: Date.now() });
+    const res = runCli(['setup', 'finish']);
+    assert.strictEqual(res.status, 0, res.stderr);
+    assert.match(res.stdout, /claim-code --role owner/);
+    const state = await setup.readSetupState(db);
+    assert.strictEqual(state.state, 'ready');
+    assert.strictEqual(state.readyBy, 'cli');
+    assert.strictEqual(await setup.redeemSetupCode(db, pendingCode.code), null, 'the code no longer works');
+    const again = runCli(['setup', 'finish']);
+    assert.strictEqual(again.status, 0);
+    assert.match(again.stdout, /already ready/);
+    assert.ok(!res.stdout.includes(pendingCode.display) && !res.stderr.includes(pendingCode.display));
+  });
+
   it('[ADMC4] claim-code: a one-time code for the role, with its TTL; a bad role or TTL is refused', async () => {
     const res = runCli(['claim-code', '--role', 'owner', '--ttl', '10m']);
     assert.strictEqual(res.status, 0, res.stderr);

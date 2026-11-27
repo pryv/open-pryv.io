@@ -28,8 +28,8 @@ import type { AdminPermission } from './permissions.ts';
  *   request. No write per request: the portal does the idle lock.
  *
  * Ending a session wins over a renewal racing it. Renewal and step-up
- * rewrite the row (consume, then set), so a logout landing between the two
- * would find no row to delete and the renewal would bring the session back.
+ * rewrite the row (read, then set), so a logout landing between the two
+ * would have its delete undone by the renewal's write.
  * Ending therefore first writes a marker `admin-session-ended/<sha256>` that
  * outlives any renewal (24 h and 5 min, past the longest session), then
  * deletes the row: a renewal refuses a marked session before and after its
@@ -37,8 +37,9 @@ import type { AdminPermission } from './permissions.ts';
  *
  * "MFA passed in this sign-in" is not recorded on the personal access. The
  * home core stamps it at `mfa.verify` in its core-local key-value store
- * (`recordMfaSignIn`, keyed by the hash of the released token, kept for the
- * admin session TTL); `mfaSignInAt` reads it when the admin session is opened.
+ * (`recordMfaSignIn`, one entry per account holding the hash of the released
+ * token, kept for the admin session TTL); `mfaSignInAt` reads it when the
+ * admin session is opened.
  */
 
 export const SETUP_SESSION_TTL_MS = 2 * 3600 * 1000;
@@ -130,7 +131,10 @@ export async function renewAdminSession (db: AdminStore, token: unknown, opts: {
   const key = keyOf(KEYS.adminSessionPrefix, token);
   if (key == null || !(opts.ttlMs > 0)) return null;
   if (await isEnded(db, token)) return null;
-  const entry = await db.consumeAccessState(key);
+  // Read, then write over: the row stays readable meanwhile, so the other
+  // requests of the session go on (an end still wins: the marker is checked
+  // before and after the write).
+  const entry = await db.getAccessState(key);
   if (entry == null || !isPlainObject(entry.value)) return null;
   const row = { ...(entry.value as AdminSessionRow) };
   if (opts.mfaAt != null) row.mfaAt = opts.mfaAt;
@@ -171,9 +175,12 @@ export async function resolveAdminSession (db: AdminStore, token: unknown, now: 
   return { session, role, permissions };
 }
 
+/** How far in this core's future a second factor may be stamped (the home core's clock ahead of this one). */
+export const STEP_UP_CLOCK_SKEW_MS = 60 * 1000;
+
 /** Whether the session's second factor is recent enough for a step-up act. */
 export function isStepUpFresh (session: Pick<AdminSessionRow, 'mfaAt'>, now: number, stepUpMs: number): boolean {
-  return session.mfaAt != null && session.mfaAt <= now && now - session.mfaAt <= stepUpMs;
+  return session.mfaAt != null && session.mfaAt <= now + STEP_UP_CLOCK_SKEW_MS && now - session.mfaAt <= stepUpMs;
 }
 
 // --- Second factor of a sign-in (home core, core-local) --- //
@@ -185,21 +192,27 @@ export type LocalKv = {
 };
 
 const MFA_SIGN_IN_PREFIX = 'admin-mfa-sign-in/';
-/** Most stamps kept at once on a core; past it a stamp is not written (the admin session then sees no second factor). */
-const MFA_SIGN_IN_MAX = 20000;
+/**
+ * Most stamps kept at once on a core. One stamp per account (the latest
+ * second-factor sign-in), so the family grows with the accounts signing in
+ * with a second factor, not with their sign-ins; past the ceiling a new
+ * account's stamp is not written (its admin session then sees no second
+ * factor), an account's own stamp is always replaced.
+ */
+const MFA_SIGN_IN_MAX = 100000;
 
-/** Record that the sign-in which released `token` passed its second factor. Best-effort. */
+/** Record that the sign-in which released `token` passed its second factor (the account's latest such sign-in). Best-effort. */
 export async function recordMfaSignIn (kv: LocalKv, opts: { token: string; userId: string; now: number; ttlMs: number }): Promise<boolean> {
-  if (typeof opts.token !== 'string' || opts.token.length === 0 || !(opts.ttlMs > 0)) return false;
-  return await kv.set(MFA_SIGN_IN_PREFIX + tokenDigest(opts.token), { userId: opts.userId, at: opts.now },
+  if (typeof opts.token !== 'string' || opts.token.length === 0 || !(opts.ttlMs > 0) || typeof opts.userId !== 'string') return false;
+  return await kv.set(MFA_SIGN_IN_PREFIX + opts.userId, { token: tokenDigest(opts.token), at: opts.now },
     { ttlMs: opts.ttlMs, ifUnderPrefix: { prefix: MFA_SIGN_IN_PREFIX, max: MFA_SIGN_IN_MAX } });
 }
 
-/** When the sign-in that released `token` passed its second factor, if this core recorded it. */
+/** When the sign-in that released `token` passed its second factor, if this core recorded it as the account's latest. */
 export async function mfaSignInAt (kv: LocalKv, opts: { token: string; userId: string }): Promise<number | null> {
-  if (typeof opts.token !== 'string' || opts.token.length === 0) return null;
-  const value = await kv.get(MFA_SIGN_IN_PREFIX + tokenDigest(opts.token));
-  if (!isPlainObject(value) || value.userId !== opts.userId || typeof value.at !== 'number') return null;
+  if (typeof opts.token !== 'string' || opts.token.length === 0 || typeof opts.userId !== 'string') return null;
+  const value = await kv.get(MFA_SIGN_IN_PREFIX + opts.userId);
+  if (!isPlainObject(value) || value.token !== tokenDigest(opts.token) || typeof value.at !== 'number') return null;
   return value.at;
 }
 

@@ -14,7 +14,9 @@
   <p class="lead">This page creates the first administrator of this platform. It is served by the core
     itself and disappears once setup is finished.</p>
   <p class="note">Keep this page open until the end: reloading it ends the setup session, and the setup
-    code works once (a new one is minted with <code>node bin/admin.js setup-code --new</code>).</p>
+    code works once (a new one is minted with <code>node bin/admin.js setup-code --new</code>).
+    A platform that requires more account fields than this page asks for: create the account with
+    <code>POST /system/create-user</code> (admin key) or the account app, then sign in here.</p>
 
   <div id="message" class="message" role="alert" hidden></div>
 

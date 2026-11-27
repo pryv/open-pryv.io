@@ -8,7 +8,7 @@
 import { PERMISSIONS } from './permissions.ts';
 import type { AdminPermission } from './permissions.ts';
 import { generateCode, formatCode, hashCode, normalizeCode } from './codes.ts';
-import { KEYS, checkKeyId, parseJson, isPlainObject } from './store.ts';
+import { KEYS, checkKeyId, parseJson, isPlainObject, updatePlatformKv, undoPlatformKvUpdate } from './store.ts';
 import type { AdminStore } from './store.ts';
 import type { MintedCode } from './setupState.ts';
 
@@ -153,13 +153,35 @@ export async function grantRole (db: AdminStore, userId: string, opts: {
   if (!VIAS.has(opts.via)) throw new Error('invalid via');
   const grant: RoleGrant = { role: opts.role, scope: opts.scope, grantedAt: opts.now, grantedBy: checkActor(opts.grantedBy), via: opts.via };
   if (opts.expiresAt != null) grant.expiresAt = opts.expiresAt;
-  const current = await readRoleRow(db, userId);
-  const grants = (current?.grants ?? []).filter((g) => !(g.role === grant.role && g.scope === grant.scope));
-  grants.push(grant);
-  if (opts.force !== true) await checkLastOwner(db, userId, current?.grants ?? [], grants);
-  const row: RoleRow = { ...(current ?? {}), grants, updatedAt: opts.now };
-  await db.setPlatformKv(roleKey(userId), JSON.stringify(row));
-  return row;
+  const key = roleKey(userId);
+  const done = await updatePlatformKv(db, key, async (raw) => {
+    const current = parseRow(raw);
+    const grants = (current?.grants ?? []).filter((g) => !(g.role === grant.role && g.scope === grant.scope));
+    grants.push(grant);
+    if (opts.force !== true) await checkLastOwner(db, userId, current?.grants ?? [], grants);
+    // A new row (the account held no role): a session left from a role this
+    // account held before (its row deleted, the session row not yet
+    // expired) stays refused.
+    const row: RoleRow = current == null
+      ? { grants, updatedAt: opts.now, sessionsRevokedAt: opts.now - 1 }
+      : { ...current, grants, updatedAt: opts.now };
+    return { next: JSON.stringify(row), result: { row, lostOwner: current?.grants.some(isLastingOwnerGrant) === true && !grants.some(isLastingOwnerGrant) } };
+  });
+  if (done == null) throw new Error('grantRole: no change made');
+  if (done.result.lostOwner && opts.force !== true) await recheckOwners(db, key, done.before, done.after);
+  return done.result.row;
+}
+
+/**
+ * After a write that removed `userId`'s lasting owner grant: when a racing
+ * change elsewhere left the platform without any lasting owner, the write is
+ * undone and refused. Two racing removals of the last two owners then both
+ * fail (the safe side).
+ */
+async function recheckOwners (db: AdminStore, key: string, before: string | null, after: string | null): Promise<void> {
+  if ((await lastingOwners(db)).length > 0) return;
+  await undoPlatformKvUpdate(db, key, before, after);
+  throw new LastOwnerError();
 }
 
 /**
@@ -169,27 +191,31 @@ export async function grantRole (db: AdminStore, userId: string, opts: {
  * unless `force`.
  */
 export async function revokeRole (db: AdminStore, userId: string, opts: { role?: string; scope?: string; now: number; force?: boolean }): Promise<boolean> {
-  const current = await readRoleRow(db, userId);
-  if (current == null) return false;
-  const keep = opts.role == null
-    ? []
-    : current.grants.filter((g) => !(g.role === opts.role && (opts.scope == null || g.scope === opts.scope)));
-  if (keep.length === current.grants.length) return false;
-  if (opts.force !== true) await checkLastOwner(db, userId, current.grants, keep);
-  if (keep.length === 0) {
-    await db.deletePlatformKv(roleKey(userId));
-  } else {
-    await db.setPlatformKv(roleKey(userId), JSON.stringify({ ...current, grants: keep, updatedAt: opts.now }));
-  }
+  const key = roleKey(userId);
+  const done = await updatePlatformKv(db, key, async (raw) => {
+    const current = parseRow(raw);
+    if (current == null) return null;
+    const keep = opts.role == null
+      ? []
+      : current.grants.filter((g) => !(g.role === opts.role && (opts.scope == null || g.scope === opts.scope)));
+    if (keep.length === current.grants.length) return null;
+    if (opts.force !== true) await checkLastOwner(db, userId, current.grants, keep);
+    const next = keep.length === 0 ? null : JSON.stringify({ ...current, grants: keep, updatedAt: opts.now });
+    return { next, result: current.grants.some(isLastingOwnerGrant) && !keep.some(isLastingOwnerGrant) };
+  });
+  if (done == null) return false;
+  if (done.result && opts.force !== true) await recheckOwners(db, key, done.before, done.after);
   return true;
 }
 
 /** Refuse every admin session of this account created before `now`. False when it holds no role. */
 export async function revokeSessionsOf (db: AdminStore, userId: string, now: number): Promise<boolean> {
-  const current = await readRoleRow(db, userId);
-  if (current == null) return false;
-  await db.setPlatformKv(roleKey(userId), JSON.stringify({ ...current, sessionsRevokedAt: now, updatedAt: now }));
-  return true;
+  const done = await updatePlatformKv(db, roleKey(userId), (raw) => {
+    const current = parseRow(raw);
+    if (current == null) return null;
+    return { next: JSON.stringify({ ...current, sessionsRevokedAt: now, updatedAt: now }), result: true };
+  });
+  return done != null;
 }
 
 /** The grants that count now: known role and scope, not expired. */

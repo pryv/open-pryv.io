@@ -14,6 +14,7 @@
 //   node bin/admin.js setup-code                 # setup state, pending code times
 //   node bin/admin.js setup-code --new           # replace the setup code (printed once)
 //   node bin/admin.js setup-code --hash [<code>] # SHA-256 for setup.codeHash (no store access)
+//   node bin/admin.js setup finish               # setup done without a first administrator
 //   node bin/admin.js claim-code [--role owner] [--scope platform] [--ttl 15m]
 //   node bin/admin.js roles list
 //   node bin/admin.js roles revoke <userId | username> [--role <r>] [--scope <s>] [--force]
@@ -21,7 +22,8 @@
 //
 // A multi-core joiner that layers a host-config file passes it with
 // `--config <file>`, as for bin/master.js. A code is printed once and never
-// stored (only its SHA-256 is): keep the output out of shared logs.
+// stored (only its SHA-256 is): keep the output out of shared logs. Each act
+// leaves one line (never a code) in the audit syslog channel when it is on.
 
 const path = require('path');
 const fs = require('fs');
@@ -62,6 +64,9 @@ require('@pryv/boiler').init({
   }, {
     pluginAsync: require('../config/plugins/systemStreams')
   }, {
+    scope: 'default-audit-path',
+    file: path.resolve(__dirname, '../config/plugins/default-path.js')
+  }, {
     plugin: require('../config/plugins/core-identity')
   }, ...(args.config != null
     ? [{ scope: 'host-config', file: path.resolve(process.cwd(), args.config) }]
@@ -79,6 +84,7 @@ require('@pryv/boiler').init({
     let status;
     switch (args.command) {
       case 'setup-code': status = await setupCodeCommand(ctx, args); break;
+      case 'setup': status = await setupFinishCommand(ctx); break;
       case 'claim-code': status = await claimCodeCommand(ctx, args); break;
       case 'roles': status = await rolesCommand(ctx, args); break;
       case 'sessions': status = await sessionsCommand(ctx, args); break;
@@ -120,7 +126,7 @@ function hashCommand (a) {
 async function setupCodeCommand ({ config, db }, a) {
   const setup = require('../components/business/src/admin/setupState.ts');
   const { readAdminConfig } = require('../components/business/src/admin/config.ts');
-  const { setupBlock, SETUP_CODE_FILE } = require('../components/business/src/admin/setupBoot.ts');
+  const { setupBlock } = require('../components/business/src/admin/setupBoot.ts');
   const state = await setup.readSetupState(db);
   if (state == null) {
     console.error('admin: no setup state yet: start a core of this platform once (its first boot decides it).');
@@ -150,17 +156,32 @@ async function setupCodeCommand ({ config, db }, a) {
     return 1;
   }
   // The file of the previous code holds an invalid code now.
-  const codeFile = path.join(setupCodeDir(), SETUP_CODE_FILE);
-  try {
-    if (fs.existsSync(codeFile)) fs.unlinkSync(codeFile);
-  } catch (err) {
-    console.error('admin: could not delete the stale ' + codeFile + ': ' + err.message);
-  }
+  removeSetupCodeFile();
   process.stdout.write(setupBlock(minted, config, null));
+  await recordAct(config, 'setup-code.replaced', {});
   return 0;
 }
 
-async function claimCodeCommand ({ db }, a) {
+async function setupFinishCommand ({ config, db }) {
+  const setup = require('../components/business/src/admin/setupState.ts');
+  const state = await setup.readSetupState(db);
+  if (state == null) {
+    console.error('admin: no setup state yet: start a core of this platform once (its first boot decides it).');
+    return 1;
+  }
+  if (state.state !== 'pending') {
+    console.log('Setup is already ' + state.state + '.');
+    return 0;
+  }
+  await setup.markReady(db, { by: 'cli', now: Date.now() });
+  removeSetupCodeFile();
+  await recordAct(config, 'setup.finished', {});
+  console.log('Setup finished: the platform is ready (registration opens, the setup code no longer works).');
+  console.log('The first administrator gets the role with a claim code: node bin/admin.js claim-code --role owner');
+  return 0;
+}
+
+async function claimCodeCommand ({ config, db }, a) {
   const roles = require('../components/business/src/admin/roles.ts');
   const role = a.role ?? roles.ROLE_OWNER;
   const scope = a.scope ?? roles.SCOPE_PLATFORM;
@@ -182,6 +203,7 @@ async function claimCodeCommand ({ db }, a) {
     rule,
     ''
   ].join('\n') + '\n');
+  await recordAct(config, 'claim-code.created', { role, scope, expiresAt: iso(minted.expiresAt) });
   return 0;
 }
 
@@ -222,6 +244,7 @@ async function rolesCommand (ctx, a) {
     console.error('admin: no matching grant for ' + userId);
     return 1;
   }
+  await recordAct(ctx.config, 'role.deleted', { target: userId, role: a.role, scope: a.scope, force: a.force ? 'yes' : null });
   console.log('Revoked: ' + (a.role != null ? a.role + (a.scope != null ? ' @ ' + a.scope : '') : 'every grant') + ' of ' + userId +
     '. Its administrator sessions stop at their next request.');
   return 0;
@@ -234,6 +257,7 @@ async function sessionsCommand (ctx, a) {
     console.error('admin: ' + userId + ' holds no administrator role (no session to revoke)');
     return 1;
   }
+  await recordAct(ctx.config, 'sessions.revoked', { target: userId });
   console.log('Every administrator session of ' + userId + ' opened until now is refused from its next request.');
   return 0;
 }
@@ -274,10 +298,46 @@ function iso (ms) {
   return new Date(ms).toISOString();
 }
 
-/** The folder of the setup code file: that of the `--config` file, else the base config folder (as bin/master.js). */
-function setupCodeDir () {
-  if (args.config != null) return path.dirname(path.resolve(process.cwd(), args.config));
-  return path.resolve(__dirname, '../config/');
+/** Delete this core's setup code file (it holds an invalid code now). Best-effort. */
+function removeSetupCodeFile () {
+  const { setupCodeFileOf } = require('../components/business/src/admin/setupBoot.ts');
+  const codeFile = setupCodeFileOf(process.argv.slice(2), path.resolve(__dirname, '../config/'));
+  try {
+    if (fs.existsSync(codeFile)) fs.unlinkSync(codeFile);
+  } catch (err) {
+    console.error('admin: could not delete the stale ' + codeFile + ': ' + err.message);
+  }
+}
+
+/**
+ * One line per act of this tool (never a code): in the tool's log and, when
+ * `audit.syslog.active`, through the audit syslog channel (notice level), so
+ * a later investigation finds the acts done from a shell.
+ */
+async function recordAct (config, act, fields) {
+  let osUser = 'unknown';
+  try { osUser = require('os').userInfo().username; } catch (_e) { /* no passwd entry in some containers */ }
+  const parts = ['admin-cli', act];
+  for (const [k, v] of Object.entries(fields)) if (v != null) parts.push(k + ':' + v);
+  parts.push('osUser:' + osUser, 'core:' + String(config.get('core:id') ?? 'single'));
+  const line = parts.join(' ');
+  require('@pryv/boiler').getLogger('admin-cli').info(line);
+  if (config.get('audit:syslog:active') !== true) return;
+  try {
+    const winston = require('winston');
+    require('winston-syslog');
+    const transport = new winston.transports.Syslog(config.get('audit:syslog:options'));
+    transport.on('error', (err) => console.error('admin: the syslog line was not sent: ' + err.message));
+    const logger = winston.createLogger({ levels: winston.config.syslog.levels, format: winston.format.printf((i) => i.message), transports: [transport] });
+    await new Promise((resolve) => {
+      const timer = setTimeout(resolve, 2000);
+      logger.on('finish', () => { clearTimeout(timer); resolve(); });
+      logger.log({ level: 'notice', message: line });
+      logger.end();
+    });
+  } catch (err) {
+    console.error('admin: the syslog line was not sent: ' + err.message);
+  }
 }
 
 function parseArgs (list) {
@@ -307,6 +367,10 @@ function parseArgs (list) {
       if (!out.hash && rest.length > 0) throw new Error('setup-code takes no argument (a code is hashed with --hash <code>)');
       out.positional = rest;
       break;
+    case 'setup':
+      out.sub = rest.shift() ?? null;
+      if (out.sub === 'finish' && rest.length === 0) break;
+      throw new Error('setup finish');
     case 'claim-code':
       if (rest.length > 0) throw new Error('claim-code takes options only');
       break;
@@ -335,6 +399,8 @@ function printUsage (stream) {
     '  node bin/admin.js setup-code --hash           generate a code and its SHA-256 for setup.codeHash',
     '  node bin/admin.js setup-code --hash <code>    the SHA-256 of a code you chose (26 Crockford base32',
     '                                                characters; it lands in your shell history)',
+    '  node bin/admin.js setup finish                mark setup done without a first administrator (automated',
+    '                                                installs: the first administrator then claims a claim code)',
     '  node bin/admin.js claim-code [--role owner] [--scope platform] [--ttl 15m]',
     '                                                a one-time administrator code (default 15 min, at most 24h)',
     '  node bin/admin.js roles list                  every administrator and its grants',

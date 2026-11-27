@@ -118,15 +118,45 @@ export default function adminStoreConformance (getDB) {
       assert.equal(await db.getAccessState('setup-code/' + hashCode(minted.code)), null);
     });
 
-    it('[ADKC9] past 10 attempts per window the pending code is deleted', async () => {
+    it('[ADKC9] past 10 attempts per window the attempt is refused; the pending code stays valid', async () => {
       const minted = await pendingWithCode();
       const now = Date.now();
       for (let i = 0; i < 10; i++) assert.deepEqual(await setup.countSetupAttempt(db, { coreId: 'core-a', now }), { allowed: true });
       const refused = await setup.countSetupAttempt(db, { coreId: 'core-a', now });
       assert.equal(refused.allowed, false);
       assert.ok(refused.retryAt > now);
-      assert.equal(await setup.redeemSetupCode(db, minted.code), null);
+      assert.notEqual(await setup.redeemSetupCode(db, minted.code), null, 'not withdrawn');
       assert.equal((await setup.readSetupState(db)).state, 'pending');
+    });
+
+    it('[ADKC17] compare-and-set writers: a ready state never goes back to pending, racing writers of one role row all land', async () => {
+      const minted = await pendingWithCode();
+      // A code replacement racing the finish: whatever the order, the state ends ready.
+      await Promise.all([
+        setup.markReady(db, { by: 'user-1', now: Date.now() }),
+        setup.mintSetupCode(db, { coreId: 'core-b', ttlMs: HOUR, now: Date.now() }),
+        setup.redeemSetupCode(db, minted.code)
+      ]);
+      assert.equal((await setup.readSetupState(db)).state, 'ready');
+      assert.equal(await setup.mintSetupCode(db, { coreId: 'core-b', ttlMs: HOUR, now: Date.now() }), null);
+      // Concurrent grants on one row: none is lost.
+      await roles.grantRole(db, 'curace', { role: 'owner', scope: 'platform', grantedBy: 'setup', via: 'setup', now: Date.now() });
+      await Promise.all([
+        roles.revokeSessionsOf(db, 'curace', Date.now()),
+        roles.grantRole(db, 'curace', { role: 'owner', scope: 'platform', grantedBy: 'g2', via: 'grant', now: Date.now() })
+      ]);
+      const row = await roles.readRoleRow(db, 'curace');
+      assert.equal(row.grants.length, 1);
+      assert.equal(row.grants[0].grantedBy, 'g2', 'the grant landed');
+      assert.ok(row.sessionsRevokedAt != null, 'the revocation landed');
+    });
+
+    it('[ADKC18] two racing revocations of the last two owners: never both', async () => {
+      const now = Date.now();
+      for (const u of ['cuo1', 'cuo2']) await roles.grantRole(db, u, { role: 'owner', scope: 'platform', grantedBy: 'setup', via: 'setup', now });
+      const results = await Promise.allSettled(['cuo1', 'cuo2'].map((u) => roles.revokeRole(db, u, { now })));
+      assert.ok(results.some((r) => r.status === 'rejected'), 'at least one refused');
+      assert.ok((await roles.lastingOwners(db)).length >= 1, 'an owner is left');
     });
 
     it('[ADKC10] setup session: hashed row, read back, ended, expires', async () => {
@@ -143,10 +173,12 @@ export default function adminStoreConformance (getDB) {
 
     it('[ADKC11] admin session: resolved with the role row, refused without it, after revocation, or once ended', async () => {
       const userId = 'cuser' + Date.now();
+      const early = await sessions.createAdminSession(db, { userId, homeCore: 'core-a', mfaAt: Date.now(), now: Date.now() - 10, ttlMs: HOUR });
+      assert.equal(await sessions.resolveAdminSession(db, early.token, Date.now()), null, 'no role: refused');
+      await roles.grantRole(db, userId, { role: 'owner', scope: 'platform', grantedBy: 'setup', via: 'setup', now: Date.now() });
+      assert.equal(await sessions.resolveAdminSession(db, early.token, Date.now()), null, 'a session older than the role row stays refused');
       const opened = await sessions.createAdminSession(db, { userId, homeCore: 'core-a', mfaAt: Date.now(), now: Date.now(), ttlMs: HOUR });
       assert.ok(!(await dump()).includes(opened.token), 'no plain token in the store');
-      assert.equal(await sessions.resolveAdminSession(db, opened.token, Date.now()), null, 'no role: refused');
-      await roles.grantRole(db, userId, { role: 'owner', scope: 'platform', grantedBy: 'setup', via: 'setup', now: Date.now() });
       const resolved = await sessions.resolveAdminSession(db, opened.token, Date.now());
       assert.equal(resolved.session.userId, userId);
       assert.deepEqual([...resolved.permissions].sort(), [...PERMISSIONS].sort(), 'owner holds every permission');

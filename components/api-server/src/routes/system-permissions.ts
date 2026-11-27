@@ -88,7 +88,8 @@ export const SYSTEM_ROUTES: readonly SystemRouteEntry[] = Object.freeze([
   { method: 'POST', path: '/system/admin/session/renew', methodId: 'system.adminSession.updateExpiry', rule: { auth: 'admin', permission: null, accepts: SESSION_ONLY } },
   { method: 'POST', path: '/system/admin/session/step-up', methodId: 'system.adminSession.verifyStepUp', rule: { auth: 'admin', permission: null, accepts: SESSION_ONLY } },
   // --- roles and claim codes --- //
-  { method: 'POST', path: '/system/admin/claim-codes', methodId: 'system.claimCodes.create', rule: { auth: 'admin', permission: 'claimCodes:mint', breakGlass: true, accepts: WITH_SETUP } },
+  // Not the setup session: a claim code outlives it (and `finish`); the first administrator comes from first-admin.
+  { method: 'POST', path: '/system/admin/claim-codes', methodId: 'system.claimCodes.create', rule: { auth: 'admin', permission: 'claimCodes:mint', breakGlass: true } },
   { method: 'POST', path: '/system/admin/roles/claim', methodId: 'system.roles.claim', rule: { auth: 'personal' } },
   { method: 'GET', path: '/system/admin/roles', methodId: 'system.roles.list', rule: { auth: 'admin', permission: 'roles:read', breakGlass: true } },
   { method: 'DELETE', path: '/system/admin/roles/:userId', methodId: 'system.roles.delete', rule: { auth: 'admin', permission: 'roles:grant', breakGlass: true } },

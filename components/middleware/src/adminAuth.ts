@@ -116,14 +116,19 @@ function originOf (url: unknown): string | null {
 }
 
 /**
- * The origins of this core itself: the request's own origin (scheme and
- * `Host`), `core.url` and, in dnsLess, `dnsLess.publicUrl`. What the
- * built-in setup page is served from.
+ * The origins of this core itself: the request's own `Host` (under https and
+ * http: behind a TLS proxy that is not a trusted proxy the core sees http
+ * while the browser sends `Origin: https://...`; a foreign site cannot share
+ * the host either way), `core.url` and, in dnsLess, `dnsLess.publicUrl`.
+ * What the built-in setup page is served from.
  */
 export function ownOrigins (config: ConfigReader, req?: Request): Set<string> {
   const out = new Set<string>();
   const add = (o: string | null) => { if (o != null) out.add(o.toLowerCase()); };
-  if (req != null && typeof req.headers.host === 'string') add(originOf(`${req.protocol}://${req.headers.host}`));
+  if (req != null && typeof req.headers.host === 'string') {
+    add(originOf(`https://${req.headers.host}`));
+    add(originOf(`http://${req.headers.host}`));
+  }
   add(originOf(config.get('core:url')));
   if (config.get('dnsLess:isActive') === true) add(originOf(config.get('dnsLess:publicUrl')));
   return out;
@@ -198,10 +203,13 @@ export default function adminAuth (opts: AdminAuthOptions): RequestHandler {
 
       // The admin key: the API-wide behaviour (CORS included), as before sessions.
       if (credential.kind === 'other' && isAdminKey(credential.raw, config.get('auth:adminAccessKey'))) {
-        // A path no route serves: on to the routes (they answer 404).
-        if (rule == null || rule.auth !== 'admin') return next();
+        const breakGlass = readAdminConfig(config).adminAccessKeyScope === 'break-glass';
+        // A path no route of the table serves: on to the routes (they answer
+        // 404), except under break-glass, where the key reaches listed routes only.
+        if (rule == null) return breakGlass ? refuse('admin key outside its break-glass scope') : next();
+        if (rule.auth !== 'admin') return next();
         if (!accepts(rule, 'key')) return refuse('admin key not accepted on this route');
-        if (readAdminConfig(config).adminAccessKeyScope === 'break-glass' && rule.breakGlass !== true) {
+        if (breakGlass && rule.breakGlass !== true) {
           return refuse('admin key outside its break-glass scope');
         }
         return admit({ kind: 'key', permissions: ALL_PERMISSIONS });

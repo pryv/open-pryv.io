@@ -14,6 +14,7 @@ const { parseAdminAuthorization, allowedPortalOrigins, isPortalCorsRequest } = a
 const { createAdminSession, createSetupSession } = require('business/src/admin/sessions.ts');
 const { grantRole } = require('business/src/admin/roles.ts');
 const { claimFreshPending, markReady } = require('business/src/admin/setupState.ts');
+const { isAdminKeyInFullScope } = require('../../src/isAdminKey.ts');
 
 /**
  * [ADAU] the /system gate: admin key with its scope, administrator and setup
@@ -31,6 +32,7 @@ function memoryStore () {
     async getPlatformKv (k) { return kv.has(k) ? kv.get(k) : null; },
     async setPlatformKv (k, v) { kv.set(k, v); },
     async setPlatformKvIfAbsent (k, v) { if (kv.has(k)) return false; kv.set(k, v); return true; },
+    async replacePlatformKvIfValue (k, expected, next) { if (kv.get(k) !== expected) return false; if (next == null) kv.delete(k); else kv.set(k, next); return true; },
     async deletePlatformKv (k) { kv.delete(k); },
     async listPlatformKvEntries (prefix) { return [...kv].filter(([k]) => k.startsWith(prefix)).map(([key, value]) => ({ key, value })); },
     async setAccessState (k, value, expiresAt) { states.set(k, JSON.parse(JSON.stringify({ value, expiresAt }))); },
@@ -115,6 +117,24 @@ describe('[ADAU] /system gate', function () {
     assert.equal((await run(gate, { method: 'POST', path: '/system/admin/claim-codes', headers: { authorization: KEY } })).err, undefined);
     assert.equal((await run(gate, { path: '/system/admin/roles', headers: { authorization: KEY } })).err, undefined);
     assert.equal((await run(gate, { method: 'POST', path: '/system/ext-id/holds', headers: { authorization: KEY } })).err, undefined);
+    // A path the table does not know: refused by the gate (no route served behind its back).
+    assert.equal((await run(gate, { path: '/system/nothing-here', headers: { authorization: KEY } })).err.id, 'unknown-resource');
+  });
+
+  it('[ADAU11] the admin key outside /system: refused under break-glass, as before under full', () => {
+    const full = configOf({});
+    const glass = configOf({ 'auth:adminAccessKeyScope': 'break-glass' });
+    assert.equal(isAdminKeyInFullScope(KEY, full), true);
+    assert.equal(isAdminKeyInFullScope(KEY + 'x', full), false);
+    assert.equal(isAdminKeyInFullScope(KEY, glass), false);
+  });
+
+  it('[ADAU12] own origin: the request\'s host under https and http (a TLS proxy the core does not trust)', async () => {
+    for (const origin of ['https://setup.example.net', 'http://setup.example.net']) {
+      const r = await run(gate, { path: '/system/setup/status', headers: { origin, host: 'setup.example.net' } });
+      assert.equal(r.err, undefined, origin);
+    }
+    assert.equal((await run(gate, { path: '/system/setup/status', headers: { origin: 'https://other.example.net', host: 'setup.example.net' } })).err.id, 'unknown-resource');
   });
 
   it('[ADAU4] admin session: accepted with the permission (from any core), refused without, refused when unknown, on a key-only route, or while setup is pending', async () => {

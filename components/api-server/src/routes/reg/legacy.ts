@@ -14,7 +14,7 @@ const require = createRequire(import.meta.url);
  */
 
 const errors = require('errors').factory;
-const isAdminKey = require('middleware/src/isAdminKey.ts').default;
+const { isAdminKeyInFullScope } = require('middleware/src/isAdminKey.ts');
 const { clientIp } = require('middleware/src/clientIp.ts');
 const { redactUrl } = require('utils/src/redactUrl.ts');
 const { coreIdProblem } = require('platform/src/coreIdentity.ts');
@@ -31,7 +31,6 @@ type UserCore = { coreId: string; username: string };
 type UsersRepoLike = { usernameExists: (username: string) => Promise<boolean>; count: () => Promise<number> };
 
 export default function (expressApp: ExpressApp, app: App) {
-  const adminAccessKey = app.config.get('auth:adminAccessKey') as string;
   const domain = app.config.get('dns:domain') as string;
 
   // Lazy-loaded dependencies (avoid circular requires at module load)
@@ -50,7 +49,7 @@ export default function (expressApp: ExpressApp, app: App) {
 
   // --- Admin auth middleware (same as system routes) ---
   function checkAdmin (req: Request, _res: Response, next: NextFunction) {
-    if (!isAdminKey(req.headers.authorization, adminAccessKey)) {
+    if (!isAdminKeyInFullScope(req.headers.authorization, app.config)) {
       // Never the headers: a near-miss key would land in the log.
       logger.warn('Unauthorized attempt to access an admin route', { url: redactUrl(req.url), ip: clientIp(req) });
       return next(errors.unknownResource());

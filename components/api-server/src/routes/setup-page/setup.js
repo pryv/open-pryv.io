@@ -116,8 +116,16 @@
       throw err;
     }
     $('code').value = '';
+    // The setup session lives in this page only: leaving it ends the setup.
+    window.addEventListener('beforeunload', confirmLeave);
     await showChecks();
   });
+
+  function confirmLeave (event) {
+    if (state.setupToken == null) return;
+    event.preventDefault();
+    event.returnValue = '';
+  }
 
   // ------------------------------------------------------------ 2. checks
 
@@ -183,10 +191,22 @@
   onSubmit('form-register', async () => {
     const username = $('register-username').value.trim().toLowerCase();
     const password = $('register-password').value;
-    await call('POST', 'users', {
-      auth: asSetup(),
-      body: { appId: APP_ID, username, password, email: $('register-email').value.trim(), language: 'en' }
-    });
+    try {
+      await call('POST', 'users', {
+        auth: asSetup(),
+        body: { appId: APP_ID, username, password, email: $('register-email').value.trim(), language: 'en' }
+      });
+    } catch (err) {
+      // This page asks for the basic fields only: a platform that requires
+      // more (extra account fields, an invitation token, a proved email)
+      // refuses it.
+      if (err.status === 400 || err.status === 403) {
+        throw new Error(err.message + ' This platform may require more than this page asks for (extra account fields, ' +
+          'an invitation token or a proved email): create the account with POST /system/create-user (admin key) ' +
+          'or your account app, then sign in here.');
+      }
+      throw err;
+    }
     $('register-password').value = '';
     $('signin-username').value = username;
     await signIn(username, password);
@@ -271,6 +291,7 @@
   onClick('finish', async () => {
     await call('POST', 'system/setup/finish', { auth: asSetup() });
     state.setupToken = null;
+    window.removeEventListener('beforeunload', confirmLeave);
     await logout();
     const portal = state.status && state.status.portalUrl;
     $('done-portal').textContent = portal

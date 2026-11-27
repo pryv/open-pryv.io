@@ -25,9 +25,53 @@ import type { PlatformDB } from '../../../../storages/interfaces/platformStorage
  * | `admin-claim-attempts/<userId>`     | windowed counter   | 15 min               |
  */
 export type AdminStore = Pick<PlatformDB,
-  'getPlatformKv' | 'setPlatformKv' | 'setPlatformKvIfAbsent' | 'deletePlatformKv' | 'listPlatformKvEntries' |
+  'getPlatformKv' | 'setPlatformKv' | 'setPlatformKvIfAbsent' | 'replacePlatformKvIfValue' | 'deletePlatformKv' | 'listPlatformKvEntries' |
   'setAccessState' | 'getAccessState' | 'deleteAccessState' | 'consumeAccessState' |
   'bumpWindowedCounter'>;
+
+/** How often a compare-and-set update is tried before it gives up. */
+const UPDATE_ATTEMPTS = 8;
+
+export class ConcurrentUpdateError extends Error {
+  constructor (key: string) {
+    super(`the platform store row ${key} kept changing under this update: retry`);
+    this.name = 'ConcurrentUpdateError';
+  }
+}
+
+/**
+ * A read-modify-write of one platform KV row that never writes over a
+ * change it did not read: `change` gets the stored raw value (null: no row)
+ * and answers the next raw value (null: delete the row) with a result, or
+ * null to change nothing. The write is a compare-and-set (insert-if-absent
+ * for a missing row); on a lost race the row is read again and `change` runs
+ * again. Answers `{ result, before, after }`, or null when `change` declined.
+ */
+export async function updatePlatformKv<T> (db: AdminStore, key: string,
+  change: (raw: string | null) => Promise<{ next: string | null; result: T } | null> | { next: string | null; result: T } | null
+): Promise<{ result: T; before: string | null; after: string | null } | null> {
+  for (let attempt = 0; attempt < UPDATE_ATTEMPTS; attempt++) {
+    const raw = await db.getPlatformKv(key);
+    const out = await change(raw);
+    if (out == null) return null;
+    if (out.next === raw) return { result: out.result, before: raw, after: raw };
+    const written = raw == null
+      ? await db.setPlatformKvIfAbsent(key, out.next as string)
+      : await db.replacePlatformKvIfValue(key, raw, out.next);
+    if (written) return { result: out.result, before: raw, after: out.next };
+  }
+  throw new ConcurrentUpdateError(key);
+}
+
+/** Put back `before` where this call wrote `after` (no-op when the row changed since). */
+export async function undoPlatformKvUpdate (db: AdminStore, key: string, before: string | null, after: string | null): Promise<void> {
+  if (before === after) return;
+  if (after == null) {
+    await db.setPlatformKvIfAbsent(key, before as string);
+  } else {
+    await db.replacePlatformKvIfValue(key, after, before);
+  }
+}
 
 export const KEYS = Object.freeze({
   setupState: 'setup/state',

@@ -4,6 +4,9 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
+import * as nodeFs from 'node:fs';
+import * as nodePath from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createId as cuid } from '@paralleldrive/cuid2';
 import timestamp from 'unix-timestamp';
 import type { MethodNext as Next, ResultBag } from './_types.ts';
@@ -18,8 +21,11 @@ import {
 import type { LocalKv } from 'business/src/admin/sessions.ts';
 import {
   ROLE_OWNER, SCOPE_PLATFORM, isRole, isScope, grantRole, readRoleRow, listRoleRows, revokeRole, activeGrants,
-  permissionsOf, mintClaimCode, claimRole, countClaimAttempt, CLAIM_TTL_MAX_MS, LastOwnerError
+  permissionsOf, mintClaimCode, claimRole, countClaimAttempt, CLAIM_TTL_MAX_MS, LastOwnerError, lastingOwners
 } from 'business/src/admin/roles.ts';
+import { setupCodeFileOf } from 'business/src/admin/setupBoot.ts';
+import type * as Migrations from 'storages/interfaces/migrations/index.ts';
+import { setDeletionGuard, setDeletionTeardownStep } from 'business/src/auth/deletionTeardown.ts';
 import type { RoleRow } from 'business/src/admin/roles.ts';
 import { readAdminConfig, adminMfaRequired, portalUrl, setupPageUrl } from 'business/src/admin/config.ts';
 import { offeredCapabilities } from 'business/src/admin/capabilities.ts';
@@ -69,6 +75,32 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
   const store = (): AdminStore => storages.platformDB as AdminStore;
   const localKv = (): LocalKv => clusterKvClientFor() as LocalKv;
   const coreId = (): string => platform.coreId;
+  // One per process, created at the first checks call (as system.getMigrationsStatus does).
+  let migrationRunner: Awaited<ReturnType<typeof Migrations.createMigrationRunner>> | null = null;
+
+  /** The setup code file of this core holds a consumed or invalid code once setup is done. Best-effort. */
+  function removeSetupCodeFile (): void {
+    const file = setupCodeFileOf(process.argv, nodePath.resolve(nodePath.dirname(fileURLToPath(import.meta.url)), '../../../../config'));
+    try {
+      if (nodeFs.existsSync(file)) nodeFs.unlinkSync(file);
+    } catch (err) {
+      logger.warn(`could not delete ${file}: ${(err as Error).message}`);
+    }
+  }
+
+  // Account deletion: an administrator's role row goes with the account (its
+  // sessions end with it), and the holder may not delete the account that
+  // holds the last lasting owner grant (an admin-key deletion goes through).
+  setDeletionGuard('admin-last-owner', async (account: { id: string }) => {
+    const owners = await lastingOwners(store());
+    if (owners.length === 1 && owners[0] === account.id) {
+      return { message: 'This account holds the last owner role of the platform: grant the owner role to another account first.', data: { id: 'last-owner' } };
+    }
+    return null;
+  });
+  setDeletionTeardownStep('admin-role', async (account: { id: string }) => {
+    await revokeRole(store(), account.id, { now: Date.now(), force: true });
+  });
 
   // ------------------------------------------------------------ helpers
 
@@ -173,7 +205,6 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
         state: pending ? 'pending' : 'ready',
         codePending: code != null,
         codeExpiresAt: code?.expiresAt ?? null,
-        readyAt: state?.readyAt ?? null,
         mfaRequired: adminMfaRequired(config),
         setupPageUrl: setupPageUrl(config),
         portalUrl: portalUrl(config)
@@ -193,8 +224,8 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
       let pendingMigrations: number | null = null;
       try {
         const { createMigrationRunner, summarizeStatus } = await import('storages/interfaces/migrations/index.ts');
-        const runner = await createMigrationRunner({ logger: getLogger('migrations') });
-        pendingMigrations = summarizeStatus(await runner.status()).pending;
+        migrationRunner ??= await createMigrationRunner({ logger: getLogger('migrations') });
+        pendingMigrations = summarizeStatus(await migrationRunner.status()).pending;
       } catch (err) {
         logger.warn('setup checks: migration status not readable: ' + (err as Error).message);
       }
@@ -209,7 +240,7 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
       const now = Date.now();
       const attempt = await countSetupAttempt(db, { coreId: coreId(), now });
       if (!attempt.allowed) {
-        return errors.tooManyRequests('Too many setup code attempts on this core: the pending code was withdrawn. Issue a new one (bin/admin.js setup-code --new).',
+        return errors.tooManyRequests('Too many setup code attempts on this core: retry once the wait is over (the code stays valid).',
           Math.max(1, Math.ceil((attempt.retryAt - now) / 1000)));
       }
       if (await redeemSetupCode(db, params.code) == null) return errors.unknownResource('setup code');
@@ -234,11 +265,17 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
       const db = store();
       if ((await readSetupState(db))?.state !== 'pending') return errors.invalidOperation('Setup is not pending.');
       const now = Date.now();
-      const owners = (await listRoleRows(db)).filter(({ row }) => activeGrants(row, now).some((g) => g.role === ROLE_OWNER));
-      if (owners.length === 0) return errors.invalidOperation('Setup needs a first administrator (POST /system/setup/first-admin) before it can finish.');
       const subject = context.adminSubject;
+      // The setup session needs its first administrator; the admin key may
+      // finish without one (automated installs: the first administrator then
+      // comes from a claim code).
+      if (subject?.kind === 'setup') {
+        const owners = (await listRoleRows(db)).filter(({ row }) => activeGrants(row, now).some((g) => g.role === ROLE_OWNER));
+        if (owners.length === 0) return errors.invalidOperation('Setup needs a first administrator (POST /system/setup/first-admin) before it can finish.');
+      }
       const state = await markReady(db, { by: subject?.kind === 'setup' ? 'setup' : 'admin-key', now });
       if (subject?.kind === 'setup') await endSetupSession(db, subject.token);
+      removeSetupCodeFile();
       result.setup = { state: state.state, readyAt: state.readyAt ?? null };
     }));
 

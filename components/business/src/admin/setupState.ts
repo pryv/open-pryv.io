@@ -6,7 +6,7 @@
  */
 
 import { generateCode, formatCode, hashCode, normalizeCode, hashesEqual, isSha256Hex } from './codes.ts';
-import { KEYS, checkKeyId, parseJson, isPlainObject } from './store.ts';
+import { KEYS, checkKeyId, parseJson, isPlainObject, updatePlatformKv } from './store.ts';
 import type { AdminStore } from './store.ts';
 
 /**
@@ -25,8 +25,8 @@ import type { AdminStore } from './store.ts';
  * the previous one even if deleting its row failed. Redeeming consumes the row
  * atomically: of two concurrent redeems exactly one wins.
  *
- * The state row is updated read-modify-write (setup is a one-operator act:
- * no concurrent writers are expected beyond the first-writer claim).
+ * Every update of the state row is a compare-and-set (`updateState`): a
+ * writer that lost a race reads the row again, so `ready` never goes back.
  */
 
 export type SetupStateName = 'pending' | 'ready';
@@ -65,13 +65,27 @@ export const SETUP_ATTEMPTS_WINDOW_MS = 15 * 60 * 1000;
 const STATES = new Set<string>(['pending', 'ready']);
 
 export async function readSetupState (db: AdminStore): Promise<SetupState | null> {
-  const parsed = parseJson<unknown>(await db.getPlatformKv(KEYS.setupState));
+  return parseState(await db.getPlatformKv(KEYS.setupState));
+}
+
+function parseState (raw: string | null): SetupState | null {
+  const parsed = parseJson<unknown>(raw);
   if (!isPlainObject(parsed) || typeof parsed.state !== 'string' || !STATES.has(parsed.state)) return null;
   return parsed as SetupState;
 }
 
-async function writeState (db: AdminStore, state: SetupState): Promise<void> {
-  await db.setPlatformKv(KEYS.setupState, JSON.stringify(state));
+/**
+ * Compare-and-set update of the state row: `change` gets the current state
+ * and answers the next one (null: change nothing), so no write ever lands on
+ * a state it did not read (a `ready` is never turned back into `pending` by
+ * a writer that read `pending` before).
+ */
+async function updateState<T> (db: AdminStore, change: (state: SetupState | null) => { next: SetupState; result: T } | null): Promise<T | null> {
+  const done = await updatePlatformKv(db, KEYS.setupState, (raw) => {
+    const out = change(parseState(raw));
+    return out == null ? null : { next: JSON.stringify(out.next), result: out.result };
+  });
+  return done == null ? null : done.result;
 }
 
 /**
@@ -108,19 +122,21 @@ export async function recordLegacyReady (db: AdminStore, opts: { coreId: string;
 
 /** Finish setup: `ready`, and the pending code (if any) is deleted. */
 export async function markReady (db: AdminStore, opts: { by: string; now: number }): Promise<SetupState> {
-  const current = await readSetupState(db);
-  if (current?.codeKey != null) await db.deleteAccessState(KEYS.setupCodePrefix + current.codeKey);
-  const next: SetupState = {
-    ...(current ?? { createdAt: opts.now, createdBy: 'unknown', via: 'fresh' as const }),
-    state: 'ready',
-    readyAt: opts.now,
-    readyBy: opts.by,
-    codeKey: null,
-    codeCreatedAt: null,
-    codeExpiresAt: null
-  };
-  await writeState(db, next);
-  return next;
+  const done = await updateState(db, (current) => {
+    const next: SetupState = {
+      ...(current ?? { createdAt: opts.now, createdBy: 'unknown', via: 'fresh' as const }),
+      state: 'ready',
+      readyAt: opts.now,
+      readyBy: opts.by,
+      codeKey: null,
+      codeCreatedAt: null,
+      codeExpiresAt: null
+    };
+    return { next, result: { next, codeKey: current?.codeKey ?? null } };
+  });
+  if (done == null) throw new Error('markReady: no change made');
+  if (done.codeKey != null) await db.deleteAccessState(KEYS.setupCodePrefix + done.codeKey);
+  return done.next;
 }
 
 /**
@@ -133,21 +149,31 @@ export async function installSetupCode (db: AdminStore, opts: {
 }): Promise<{ expiresAt: number } | null> {
   if (!isSha256Hex(opts.codeHash)) throw new Error('installSetupCode: codeHash must be a SHA-256 hex digest');
   if (!(opts.ttlMs > 0)) throw new Error('installSetupCode: ttlMs must be positive');
-  const state = await readSetupState(db);
-  if (state?.state !== 'pending') return null;
+  if ((await readSetupState(db))?.state !== 'pending') return null;
   const expiresAt = opts.now + opts.ttlMs;
   const row: SetupCodeRow = { createdAt: opts.now, coreId: checkKeyId('core id', opts.coreId) };
   if (opts.supplied === true) row.supplied = true;
+  // The code row first: it is refused until the state points at it.
   await db.setAccessState(KEYS.setupCodePrefix + opts.codeHash, row, expiresAt);
-  const previous = state.codeKey;
-  await writeState(db, {
-    ...state,
-    codeKey: opts.codeHash,
-    codeCreatedAt: opts.now,
-    codeExpiresAt: expiresAt,
-    suppliedCodeHash: opts.supplied === true ? opts.codeHash : (state.suppliedCodeHash ?? null)
+  const previous = await updateState(db, (state) => {
+    if (state?.state !== 'pending') return null;
+    return {
+      next: {
+        ...state,
+        codeKey: opts.codeHash,
+        codeCreatedAt: opts.now,
+        codeExpiresAt: expiresAt,
+        suppliedCodeHash: opts.supplied === true ? opts.codeHash : (state.suppliedCodeHash ?? null)
+      },
+      result: { codeKey: state.codeKey ?? null }
+    };
   });
-  if (previous != null && previous !== opts.codeHash) await db.deleteAccessState(KEYS.setupCodePrefix + previous);
+  if (previous == null) {
+    // Setup finished meanwhile: the new code never becomes valid.
+    await db.deleteAccessState(KEYS.setupCodePrefix + opts.codeHash);
+    return null;
+  }
+  if (previous.codeKey != null && previous.codeKey !== opts.codeHash) await db.deleteAccessState(KEYS.setupCodePrefix + previous.codeKey);
   return { expiresAt };
 }
 
@@ -171,10 +197,11 @@ export async function pendingSetupCode (db: AdminStore): Promise<{ createdAt: nu
 
 /** Delete the pending code (state stays `pending`): a new one must be minted. */
 export async function invalidatePendingCode (db: AdminStore): Promise<void> {
-  const state = await readSetupState(db);
-  if (state?.codeKey == null) return;
-  await db.deleteAccessState(KEYS.setupCodePrefix + state.codeKey);
-  await writeState(db, { ...state, codeKey: null, codeCreatedAt: null, codeExpiresAt: null });
+  const cleared = await updateState(db, (state) => {
+    if (state?.codeKey == null) return null;
+    return { next: { ...state, codeKey: null, codeCreatedAt: null, codeExpiresAt: null }, result: state.codeKey };
+  });
+  if (cleared != null) await db.deleteAccessState(KEYS.setupCodePrefix + cleared);
 }
 
 /**
@@ -191,21 +218,22 @@ export async function redeemSetupCode (db: AdminStore, input: unknown): Promise<
   const entry = await db.consumeAccessState(KEYS.setupCodePrefix + codeHash);
   if (entry == null) return null;
   if (!hashesEqual(state.codeKey, codeHash)) return null;
-  const latest = await readSetupState(db);
-  if (latest != null && hashesEqual(latest.codeKey, codeHash)) {
-    await writeState(db, { ...latest, codeKey: null, codeCreatedAt: null, codeExpiresAt: null });
-  }
+  await updateState(db, (latest) => {
+    if (latest == null || !hashesEqual(latest.codeKey, codeHash)) return null;
+    return { next: { ...latest, codeKey: null, codeCreatedAt: null, codeExpiresAt: null }, result: true };
+  });
   return entry.value as SetupCodeRow;
 }
 
 /**
- * Count one redeem attempt on this core (10 per 15 min). Past the budget the
- * pending code is deleted (a new one must be minted) and the attempt refused.
+ * Count one redeem attempt on this core (10 per 15 min); past the budget the
+ * attempt is refused until the window ends. The pending code stays valid: it
+ * cannot be guessed at that rate, and withdrawing it would let anyone lock
+ * the operator out of the setup page.
  */
 export async function countSetupAttempt (db: AdminStore, opts: { coreId: string; now: number }): Promise<{ allowed: true } | { allowed: false; retryAt: number }> {
   const key = KEYS.setupAttemptsPrefix + checkKeyId('core id', opts.coreId);
   const refusedUntil = await db.bumpWindowedCounter(key, SETUP_ATTEMPTS_MAX, SETUP_ATTEMPTS_WINDOW_MS, opts.now);
   if (refusedUntil == null) return { allowed: true };
-  await invalidatePendingCode(db);
   return { allowed: false, retryAt: refusedUntil };
 }

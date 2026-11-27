@@ -55,10 +55,38 @@ export type SetupBootDeps = {
   fs?: FsLike;
 };
 
+/**
+ * The master's "platform already in use" test: an account in this core's
+ * users index, a name-to-core row of any core, or another core registered.
+ */
+export function platformInUseOf (storages: {
+  usersLocalIndex: { getAllByUsername: () => Promise<Record<string, unknown>> };
+  platformDB: { listPlatformKvKeys: (prefix: string) => Promise<string[]>; getAllCoreInfos: () => Promise<Array<{ id?: string } | null>> };
+}, coreId: string): () => Promise<boolean> {
+  return async () => {
+    const local = await storages.usersLocalIndex.getAllByUsername();
+    if (Object.keys(local).length > 0) return true;
+    if ((await storages.platformDB.listPlatformKvKeys('user-core/')).length > 0) return true;
+    const cores = await storages.platformDB.getAllCoreInfos();
+    return cores.some((c) => c != null && c.id !== coreId);
+  };
+}
+
 export type SetupBootAction = 'legacy' | 'minted' | 'supplied' | 'pending' | 'ready';
 export type SetupBootResult = { state: 'pending' | 'ready'; action: SetupBootAction; codeFile: string | null };
 
 export const SETUP_CODE_FILE = 'setup-code.txt';
+
+/**
+ * Where a process started with `argv` keeps the setup code file: the folder
+ * of the `--config` file when one is given, else `baseConfigDir` (the
+ * workers get the master's argv, so both find the same file).
+ */
+export function setupCodeFileOf (argv: readonly string[], baseConfigDir: string): string {
+  const i = argv.indexOf('--config');
+  const dir = i >= 0 && argv[i + 1] ? nodePath.dirname(nodePath.resolve(argv[i + 1])) : baseConfigDir;
+  return nodePath.join(dir, SETUP_CODE_FILE);
+}
 const REPLACE_HINT = 'replace it with `node bin/admin.js setup-code --new` or POST /system/admin/setup/code (admin key)';
 
 export async function runSetupBoot (deps: SetupBootDeps): Promise<SetupBootResult> {

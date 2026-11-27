@@ -46,6 +46,7 @@ describe('[ADMS] setup, administrator sessions, roles and claim codes', function
     const app = globalThis.app;
     if (!app.systemAPI.has('system.listUsers')) await require('api-server/src/methods/system.ts').default(app.systemAPI, app.api);
     if (!app.systemAPI.has('system.setup.getStatus')) await require('api-server/src/methods/systemAdmin.ts').default(app.systemAPI);
+    if (!app.api.has('auth.delete')) await require('api-server/src/methods/auth/delete.ts').default(app.api);
     const config = await require('@pryv/boiler').getConfig();
     adminKey = config.get('auth:adminAccessKey');
     db = require('storages').platformDB;
@@ -79,6 +80,14 @@ describe('[ADMS] setup, administrator sessions, roles and claim codes', function
     const login = await coreRequest.post('/' + username + '/auth/login').send({ username, password: PASSWORD, appId: APP_ID });
     assert.equal(login.status, 200, 'login: ' + JSON.stringify(login.body));
     return { username, userId: fu.attrs.id, token: login.body.token };
+  }
+
+  /** An app or shared access of the account (not a personal one). */
+  async function appToken (user, type) {
+    const res = await coreRequest.post('/' + user.username + '/accesses').set('authorization', user.token)
+      .send({ type, name: 'adms-' + type + '-' + cuid().slice(-6), permissions: [{ streamId: '*', level: 'read' }] });
+    assert.equal(res.status, 201, JSON.stringify(res.body));
+    return res.body.access.token;
   }
 
   async function pending () {
@@ -140,7 +149,7 @@ describe('[ADMS] setup, administrator sessions, roles and claim codes', function
     assert.equal((await coreRequest.post('/system/setup/session').send({ code: live.display })).status, 404, 'not pending');
   });
 
-  it('[ADMS3] POST /system/setup/session: past 10 tries in 15 minutes, 429 and the pending code is withdrawn', async () => {
+  it('[ADMS3] POST /system/setup/session: past 10 tries in 15 minutes, 429; the pending code stays valid', async () => {
     const code = await pending();
     for (let i = 0; i < 10; i++) {
       assert.equal((await coreRequest.post('/system/setup/session').send({ code: 'wrong' })).status, 404);
@@ -148,9 +157,9 @@ describe('[ADMS] setup, administrator sessions, roles and claim codes', function
     const limited = await coreRequest.post('/system/setup/session').send({ code: code.display });
     assert.equal(limited.status, 429);
     assert.ok(Number(limited.headers['retry-after']) > 0);
+    assert.notEqual((await setup.readSetupState(db)).codeKey, null, 'not withdrawn');
     for (let i = 0; i < 20; i++) await db.releaseWindowedCounter(KEYS.setupAttemptsPrefix + coreId);
-    assert.equal((await coreRequest.post('/system/setup/session').send({ code: code.display })).status, 404, 'the code was withdrawn');
-    assert.equal((await setup.readSetupState(db)).codeKey, null);
+    assert.equal((await coreRequest.post('/system/setup/session').send({ code: code.display })).status, 201, 'the code still works once the wait is over');
   });
 
   it('[ADMS4] POST /system/setup/first-admin: the setup session and the person\'s token give the role owner; anything else answers 404', async () => {
@@ -203,6 +212,17 @@ describe('[ADMS] setup, administrator sessions, roles and claim codes', function
     assert.equal((await coreRequest.post('/system/setup/session').send({ code: 'any' })).status, 404);
   });
 
+  it('[ADMS22] POST /system/setup/finish with the admin key needs no first administrator (automated installs); registration then opens', async () => {
+    await pending();
+    const res = await coreRequest.post('/system/setup/finish').set('authorization', adminKey);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    const state = await setup.readSetupState(db);
+    assert.equal(state.state, 'ready');
+    assert.equal(state.readyBy, 'admin-key');
+    assert.equal((await roles.listRoleRows(db)).length, 0, 'no administrator yet: a claim code gives the first one');
+    assert.equal((await coreRequest.post('/system/setup/finish').set('authorization', adminKey)).status, 400, 'not pending any more');
+  });
+
   it('[ADMS7] POST /system/admin/setup/code: the admin key replaces the code (the old one stops working); 400 once ready', async () => {
     const old = await pending();
     const res = await coreRequest.post('/system/admin/setup/code').set('authorization', adminKey);
@@ -223,6 +243,10 @@ describe('[ADMS] setup, administrator sessions, roles and claim codes', function
     assert.equal((await coreRequest.post('/system/admin/session').set('authorization', user.token).send({ username: user.username })).status, 404, 'no role');
     await roles.grantRole(db, user.userId, { role: 'owner', scope: 'platform', grantedBy: 'test', via: 'grant', now: Date.now() });
     assert.equal((await coreRequest.post('/system/admin/session').set('authorization', 'wrong').send({ username: user.username })).status, 404, 'wrong token');
+    for (const type of ['app', 'shared']) {
+      const other = await appToken(user, type);
+      assert.equal((await coreRequest.post('/system/admin/session').set('authorization', other).send({ username: user.username })).status, 404, 'an ' + type + ' token of the administrator');
+    }
     const res = await coreRequest.post('/system/admin/session').set('authorization', user.token).send({ username: user.username });
     assert.equal(res.status, 201, JSON.stringify(res.body));
     const token = res.body.adminSession.token;
@@ -323,6 +347,8 @@ describe('[ADMS] setup, administrator sessions, roles and claim codes', function
     const user = await freshUser();
     const claim = (code, u = user) => coreRequest.post('/system/admin/roles/claim').set('authorization', u.token).send({ username: u.username, code });
     assert.equal((await claim('ZZZZZ-ZZZZZ-ZZZZZ-ZZZZZ-ZZZZZZ')).status, 404, 'wrong');
+    const appTok = await appToken(user, 'app');
+    assert.equal((await coreRequest.post('/system/admin/roles/claim').set('authorization', appTok).send({ username: user.username, code: minted.body.claimCode.code })).status, 404, 'an app token');
     const ok = await claim(minted.body.claimCode.code);
     assert.equal(ok.status, 200, JSON.stringify(ok.body));
     assert.deepEqual(ok.body.role.grants.map((g) => [g.role, g.via, g.grantedBy]), [['owner', 'claim-code', 'admin-key']]);
@@ -375,6 +401,47 @@ describe('[ADMS] setup, administrator sessions, roles and claim codes', function
     assert.equal(revoked.status, 200, JSON.stringify(revoked.body));
     assert.equal((await coreRequest.get('/system/admin/session').set(asSession(token))).status, 404);
     assert.equal((await coreRequest.get('/system/admin/users').set(asSession(token))).status, 404);
+  });
+
+  it('[ADMS23] a session opened before a revocation stays refused when the account gets a role again', async () => {
+    await ready();
+    const user = await freshUser();
+    const token = await owner(user);
+    await roles.grantRole(db, 'adms-other-owner', { role: 'owner', scope: 'platform', grantedBy: 'test', via: 'grant', now: Date.now() });
+    assert.equal((await coreRequest.delete('/system/admin/roles/' + user.userId).set('authorization', adminKey)).status, 200);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const code = await roles.mintClaimCode(db, { role: 'owner', scope: 'platform', mintedBy: 'admin-key', now: Date.now() });
+    const claimed = await coreRequest.post('/system/admin/roles/claim').set('authorization', user.token).send({ username: user.username, code: code.display });
+    assert.equal(claimed.status, 200, JSON.stringify(claimed.body));
+    assert.equal((await coreRequest.get('/system/admin/session').set(asSession(token))).status, 404, 'the old session stays ended');
+    const fresh = await coreRequest.post('/system/admin/session').set('authorization', user.token).send({ username: user.username });
+    assert.equal(fresh.status, 201, JSON.stringify(fresh.body));
+    assert.equal((await coreRequest.get('/system/admin/session').set(asSession(fresh.body.adminSession.token))).status, 200, 'a new one works');
+  });
+
+  it('[ADMS24] account deletion: the role row goes with the account and its sessions stop; its holder cannot delete the last owner\'s account', async () => {
+    await ready();
+    const last = await freshUser();
+    await owner(last);
+    await withInjectedConfig({ 'user-account': { delete: ['adminToken', 'personalToken'] } }, async () => {
+      const refused = await coreRequest.delete('/users/' + last.username).set('authorization', last.token);
+      assert.equal(refused.status, 400, 'the last owner\'s own deletion: ' + JSON.stringify(refused.body));
+      assert.equal(refused.body.error.data.id, 'last-owner');
+      assert.notEqual(await roles.readRoleRow(db, last.userId), null);
+    });
+    const user = await freshUser();
+    const token = await owner(user);
+    const deleted = await coreRequest.delete('/users/' + user.username).set('authorization', adminKey);
+    assert.equal(deleted.status, 200, JSON.stringify(deleted.body));
+    assert.equal(await roles.readRoleRow(db, user.userId), null, 'the role row went with the account');
+    assert.equal((await coreRequest.get('/system/admin/session').set(asSession(token))).status, 404);
+  });
+
+  it('[ADMS25] the master\'s "platform in use" test on the real storages: an account of this core makes it true', async () => {
+    await freshUser();
+    const { platformInUseOf } = require('business/src/admin/setupBoot.ts');
+    const storages = require('storages');
+    assert.equal(await platformInUseOf(storages, coreId)(), true);
   });
 
   it('[ADMS16] GET /system/admin/portal/context: the subject, the capabilities and the setup state', async () => {

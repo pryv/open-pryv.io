@@ -31,6 +31,7 @@ describe('[SYPM] /system route table and admin-key scope', function () {
     app = globalThis.app;
     if (!app.systemAPI.has('system.listUsers')) await require('api-server/src/methods/system.ts').default(app.systemAPI, app.api);
     if (!app.systemAPI.has('system.setup.getStatus')) await require('api-server/src/methods/systemAdmin.ts').default(app.systemAPI);
+    if (!app.api.has('auth.delete')) await require('api-server/src/methods/auth/delete.ts').default(app.api);
     adminKey = (await require('@pryv/boiler').getConfig()).get('auth:adminAccessKey');
   });
 
@@ -73,6 +74,26 @@ describe('[SYPM] /system route table and admin-key scope', function () {
     }
     assert.equal(match('GET', '/SYSTEM/Admin/Users/'), entries.get('GET /system/admin/users'), 'case and trailing slash, as Express');
     assert.equal(match('HEAD', '/system/admin/users'), entries.get('GET /system/admin/users'));
+    // Nothing serves /system but plain routes with a string path (a Router or
+    // an array path would escape this enumeration).
+    for (const layer of app.expressApp._router.stack) {
+      const route = layer.route;
+      if (route != null) {
+        if (typeof route.path !== 'string') {
+          const paths = [].concat(route.path).map(String);
+          assert.ok(!paths.some((p) => /^\/?system/i.test(p)), 'a /system route with a non-string path: ' + paths.join(','));
+        }
+        continue;
+      }
+      if (layer.name === 'router') {
+        // A mounted Router: none of its routes may be under /system, nor may it be mounted there.
+        assert.ok(!/^\^\\\/system/i.test(String(layer.regexp)), 'a Router mounted on /system: ' + layer.regexp);
+        for (const inner of layer.handle?.stack ?? []) {
+          const p = inner.route?.path;
+          assert.ok(p == null || ![].concat(p).map(String).some((x) => /^\/?system/i.test(x)), 'a Router serving a /system path: ' + p);
+        }
+      }
+    }
   });
 
   it('[SYPM2] every gated route answers 404 without a credential, and with a wrong one', async () => {
@@ -114,5 +135,20 @@ describe('[SYPM] /system route table and admin-key scope', function () {
       assert.notEqual(holds.status, 404, 'core to core: reaches the route (' + holds.status + ')');
     });
     assert.equal((await coreRequest.get('/system/admin/users').set('authorization', adminKey)).status, 200, 'full again');
+  });
+
+  it('[SYPM5] scope break-glass outside /system: the key no longer deletes accounts nor reaches /reg/records and /reg/admin; as before under full', async () => {
+    const username = ('sypm' + cuid().toLowerCase().replace(/[^a-z0-9]/g, '')).slice(0, 20);
+    await getNewFixture().user(username, {});
+    await withInjectedConfig({ auth: { adminAccessKeyScope: 'break-glass' } }, async () => {
+      const del = await coreRequest.delete('/users/' + username).set('authorization', adminKey);
+      assert.notEqual(del.status, 200, 'account deletion refused: ' + del.status);
+      assert.equal((await coreRequest.post('/reg/records').set('authorization', adminKey).send({})).status, 404, '/reg/records');
+      assert.equal((await coreRequest.get('/reg/admin/servers').set('authorization', adminKey)).status, 404, '/reg/admin/servers');
+    });
+    assert.notEqual((await coreRequest.post('/reg/records').set('authorization', adminKey).send({})).status, 404, '/reg/records under full');
+    assert.notEqual((await coreRequest.get('/reg/admin/servers').set('authorization', adminKey)).status, 404, '/reg/admin/servers under full');
+    const del = await coreRequest.delete('/users/' + username).set('authorization', adminKey);
+    assert.equal(del.status, 200, 'account deletion under full: ' + JSON.stringify(del.body));
   });
 });
