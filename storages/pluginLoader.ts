@@ -30,10 +30,12 @@ const __dirname = dirname(__filename);
 const path = require('path');
 const fs = require('fs');
 const { validateManifest, VALID_STORAGE_TYPES } = require('./manifest-schema.ts');
+const { INTERFACE_VERSIONS } = require('./interfaces/versions.ts');
 
 interface EngineManifest {
   entrypoint: string;
   storageTypes: string[];
+  interfaceVersions?: Record<string, number>;
   [k: string]: unknown;
 }
 
@@ -102,6 +104,38 @@ function discover () {
       dir: engineDir,
       module: null // lazy-loaded on first getEngineModule()
     };
+  }
+}
+
+/**
+ * Refuse an engine whose interface version differs from this server's for
+ * any storage type it declares (a type without a declared version counts
+ * as 1). Versions are major-only, so a lower and a higher version are both
+ * incompatible. Pure: reads the manifest only, never the engine's code.
+ * @throws {Error} naming the engine, the storage type and both versions
+ */
+function checkInterfaceVersions (engineName: string, manifest: EngineManifest,
+  hostVersions: Readonly<Record<string, number>> = INTERFACE_VERSIONS): void {
+  for (const storageType of manifest.storageTypes) {
+    const host = hostVersions[storageType];
+    if (host == null) continue; // unknown types are refused by validateManifest
+    const declaredVersion = manifest.interfaceVersions?.[storageType];
+    const declared = declaredVersion ?? 1;
+    if (declared === host) continue;
+    const implemented = declaredVersion == null
+      ? `implements interface version 1 (no "interfaceVersions.${storageType}" in its manifest)`
+      : `implements interface version ${declared}`;
+    if (declared < host) {
+      throw new Error(
+        `Engine "${engineName}": storageType "${storageType}" ${implemented}, ` +
+        `this server requires version ${host}. Update the engine (see storages/interfaces/README.md).`
+      );
+    }
+    throw new Error(
+      `Engine "${engineName}": storageType "${storageType}" ${implemented}, ` +
+      `this server provides version ${host}. Use a server release that provides version ${declared}, ` +
+      'or an older engine (see storages/interfaces/README.md).'
+    );
   }
 }
 
@@ -223,6 +257,11 @@ function resolveConfig (config: ConfigLike): void {
 async function init (config: ConfigLike): Promise<void> {
   if (initialized) return;
   discover();
+  // Before validateEngineExports(), which loads each engine's code: a stale
+  // engine is refused with this message, not with whatever its import throws.
+  for (const [engineName, engine] of Object.entries(engines)) {
+    checkInterfaceVersions(engineName, engine.manifest);
+  }
   validateEngineExports();
   resolveConfig(config);
   initialized = true;
@@ -273,6 +312,8 @@ export {
   listEngines,
   getManifest,
   reset,
+  checkInterfaceVersions,
   REQUIRED_EXPORTS,
-  VALID_STORAGE_TYPES
+  VALID_STORAGE_TYPES,
+  INTERFACE_VERSIONS
 };

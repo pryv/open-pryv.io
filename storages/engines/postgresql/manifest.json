@@ -1,5 +1,6 @@
 {
   "storageTypes": ["baseStorage", "dataStore", "seriesStorage", "auditStorage", "platformStorage", "fileStorage"],
+  "interfaceVersions": { "baseStorage": 2, "dataStore": 1, "seriesStorage": 1, "auditStorage": 1, "platformStorage": 1, "fileStorage": 1 },
   "entrypoint": "src/index.ts",
   "requiredInternals": [
     "databasePG",

@@ -48,6 +48,9 @@
   access rows in clear (`accessesInClear`, at most 100). `SessionsPG` passes a hashing failure to the callback.
 - The openers accept version-2 envelopes only. A `token` condition inside `$or` takes a plain value (an operator
   throws, both engines). `auth.accessTokensKey` joins the optional secrets of the boot validation.
+- Storage interface: `baseStorage` goes to version 2 (`storages/interfaces/versions.ts`, the PostgreSQL and SQLite
+  manifests, history in `storages/interfaces/README.md`): an engine written for version 1 keeps tokens in clear and
+  has no `getTokensAtRest()`, so the boot refuses it.
 - Not in this change: the `/reg/access` polling state, pending deletion notices, the access `integrity` hash
   (unkeyed, over the access including its token), CMC `clientData` credential URLs and backup files keep tokens as
   they did.
@@ -55,6 +58,17 @@
   same file), `[TKAR]` with
   `[TKST]`, `[TKSS]`, `[TKMG]`, `[TKTL]`, `[TKSQ]` (`components/storage/test/unit/accessTokensAtRest.test.js`, both
   engines, raw rows asserted), `[TKAP2]` (cache).
+
+### Storage engines: interface versions checked at boot
+
+- `storages/interfaces/versions.ts` gives each storage type an interface version (all 1). An engine's
+  `manifest.json` declares the version it implements per storage type (`interfaceVersions`; a type left out counts
+  as 1), and `storages/pluginLoader.ts` refuses to start when a discovered engine's version differs from the
+  server's, lower or higher, before loading the engine's code, naming the engine, the type and both versions. Every
+  discovered engine is checked, selected or not: an outdated engine folder left under `storages/engines/` stops the
+  boot once a version moves (update or remove it). The six in-tree engines declare 1; nothing changes for them.
+  Bump policy and history: `storages/interfaces/README.md`. `storages/README.md` rewritten from the loader (it named
+  factories, files and config keys that no longer exist). Tests `[IFVA]` to `[IFVH]`.
 
 ### MFA: strict session kind in `mfa.confirm` and `mfa.verify`
 

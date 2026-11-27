@@ -1,5 +1,6 @@
 {
   "storageTypes": ["seriesStorage"],
+  "interfaceVersions": { "seriesStorage": 1 },
   "entrypoint": "src/index.ts",
   "requiredInternals": [],
   "configuration": {
