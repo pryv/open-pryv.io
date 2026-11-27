@@ -70,6 +70,12 @@ function fakePlatform () {
     async deletePlatformKv (k) { kv.delete(k); },
     async listPlatformKvKeys (p) { return [...kv.keys()].filter((k) => k.startsWith(p)); },
     async listPlatformKvEntries (p) { return [...kv.entries()].filter(([k]) => k.startsWith(p)).map(([key, value]) => ({ key, value })); },
+    async setPlatformKvIfAbsent (k, v) { if (kv.has(k)) return false; kv.set(k, v); return true; },
+    async replacePlatformKvIfValue (k, expected, next) {
+      if (kv.get(k) !== expected) return false;
+      if (next == null) kv.delete(k); else kv.set(k, next);
+      return true;
+    },
     state: new Map(),
     async setAccessStateIfAbsent (k, v, exp) {
       if (this.state.has(k)) return false;

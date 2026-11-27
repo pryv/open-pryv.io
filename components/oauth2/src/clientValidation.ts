@@ -44,7 +44,9 @@ import crypto from 'node:crypto';
 import type { PlatformDB } from '../../../storages/interfaces/platformStorage/PlatformDB.ts';
 import type { OAuthClient } from './storage.ts';
 import type { ExtPermission } from './extension.ts';
-import { VETTED_FIELDS, vettedValue, localizedTextProblem } from './clientRegistry.ts';
+import { VETTED_FIELDS, MAX_STATUS_LOG, vettedValue, localizedTextProblem } from './clientRegistry.ts';
+import { updatePlatformKv } from 'business/src/admin/store.ts';
+import type { AdminStore } from 'business/src/admin/store.ts';
 import { canonicalJson, checkMaxSet, permissionsWithin } from './scopeGrammar.ts';
 import { clientMetadataSettings, hostListed } from './clientMetadataConfig.ts';
 import type { ClientStamp } from './clientMetadataId.ts';
@@ -349,16 +351,149 @@ export function reviewStands (client: OAuthClient): boolean {
 
 // --- Publishers --- //
 
-const PREFIX_PUBLISHER = 'dev-publisher/';
-const PUBLISHER_STATUSES = ['none', 'pending', 'validated', 'suspended'];
+export const PREFIX_PUBLISHER = 'dev-publisher/';
+export const PUBLISHER_STATUSES: readonly string[] = Object.freeze(['none', 'pending', 'validated', 'suspended']);
 const MAX_PUBLISHER_NAME = 128;
+const MAX_PUBLISHER_REGIONS = 32;
+const MAX_REASON_LENGTH = 500;
+const PUBLISHER_ID_RE = /^[A-Za-z0-9.~-]{1,64}$/;
+const REGION_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
-/** The decision about a publisher (an account that owns apps), as the platform store holds it. */
-export type PublisherRow = { status: 'none' | 'pending' | 'validated' | 'suspended'; displayName?: string };
+export type PublisherStatus = 'none' | 'pending' | 'validated' | 'suspended';
+
+/** The decision about a publisher (an account that owns apps), as the badge reads it. */
+export type PublisherRow = { status: PublisherStatus; displayName?: string };
+
+/** One decision about a publisher (the reviewers' trail). */
+export type PublisherLogEntry = { at: number; by: string; from: PublisherStatus | 'absent'; to: PublisherStatus; reason: string };
+
+/**
+ * The publisher row as the platform store holds it: the decision, the name
+ * shown once validated, the regions whose reviewers decide about it (absent:
+ * a reviewer at scope `platform`), and the trail of decisions (last 50).
+ */
+export type PublisherRecord = PublisherRow & { regions?: string[]; statusLog?: PublisherLogEntry[]; updatedAt?: number };
 
 function displayNameProblem (v: unknown): string | null {
   if (typeof v !== 'string') return 'must be a string';
   return localizedTextProblem(v, MAX_PUBLISHER_NAME, false);
+}
+
+/** Why a publisher id is refused, or null (the characters of an account id a client row may name as its owner). */
+export function publisherIdProblem (userId: unknown): string | null {
+  return typeof userId === 'string' && PUBLISHER_ID_RE.test(userId) ? null : 'must be 1 to 64 of A-Z a-z 0-9 . ~ -';
+}
+
+/** Why a publisher's region list is refused, or null (region keys, as a client's `regions`). */
+export function publisherRegionsProblem (regions: unknown): string | null {
+  if (!Array.isArray(regions) || regions.length === 0 || regions.length > MAX_PUBLISHER_REGIONS ||
+      regions.some((r) => typeof r !== 'string' || !REGION_KEY_RE.test(r))) {
+    return `must be a list of 1 to ${MAX_PUBLISHER_REGIONS} region keys (letters, digits, ".", "_", "-")`;
+  }
+  if (new Set(regions).size !== regions.length) return 'lists a region twice';
+  return null;
+}
+
+/** Why a reviewer's reason is refused, or null: a text of 1 to 500 characters, no control characters. */
+export function reviewReasonProblem (reason: unknown): string | null {
+  if (typeof reason !== 'string') return `must be a text of 1 to ${MAX_REASON_LENGTH} characters`;
+  return localizedTextProblem(reason, MAX_REASON_LENGTH, false);
+}
+
+function parsePublisher (raw: string | null): PublisherRecord | null {
+  if (raw == null) return null;
+  let v: unknown;
+  try { v = JSON.parse(raw); } catch { return null; }
+  if (!isPlainObject(v) || !PUBLISHER_STATUSES.includes(v.status as string)) return null;
+  return {
+    status: v.status as PublisherStatus,
+    ...(v.displayName != null && displayNameProblem(v.displayName) == null ? { displayName: v.displayName as string } : {}),
+    ...(v.regions != null && publisherRegionsProblem(v.regions) == null ? { regions: v.regions as string[] } : {}),
+    ...(Array.isArray(v.statusLog) ? { statusLog: v.statusLog.filter(isPlainObject) as PublisherLogEntry[] } : {}),
+    ...(Number.isFinite(v.updatedAt) ? { updatedAt: v.updatedAt as number } : {}),
+  };
+}
+
+/** The whole publisher row of an account (regions and trail included), or null. */
+export async function readPublisher (platform: PlatformDB, userId: string): Promise<PublisherRecord | null> {
+  if (publisherIdProblem(userId) != null || typeof platform?.getPlatformKv !== 'function') return null;
+  return parsePublisher(await platform.getPlatformKv(PREFIX_PUBLISHER + userId));
+}
+
+/** Every publisher row, by account id (unreadable rows left out). */
+export async function listPublishers (platform: PlatformDB): Promise<Array<{ userId: string; row: PublisherRecord }>> {
+  const out: Array<{ userId: string; row: PublisherRecord }> = [];
+  for (const { key, value } of await platform.listPlatformKvEntries(PREFIX_PUBLISHER)) {
+    const row = parsePublisher(value);
+    if (row != null) out.push({ userId: key.slice(PREFIX_PUBLISHER.length), row });
+  }
+  return out.sort((a, b) => (a.userId < b.userId ? -1 : a.userId > b.userId ? 1 : 0));
+}
+
+/** Why a publisher decision was refused (nothing was written). */
+export class PublisherDecisionError extends Error {
+  code: 'unknown-publisher' | 'invalid';
+  constructor (code: 'unknown-publisher' | 'invalid', message: string) {
+    super(message);
+    this.name = 'PublisherDecisionError';
+    this.code = code;
+  }
+}
+
+/** A decision about a publisher (`decidePublisher`); `displayName` / `regions` left out are kept, null removes them. */
+export type PublisherDecision = {
+  status: string;
+  displayName?: string | null;
+  regions?: string[] | null;
+  reason: string;
+  by: string;
+  allow?: (row: PublisherRecord | null) => boolean;
+  now?: number;
+};
+
+/**
+ * Record a decision about a publisher: its status, and (when given) its
+ * display name (null removes it) and regions (null removes them), with a trail
+ * entry `{ at, by, from, to, reason }` (last 50). A compare-and-set update of
+ * the row: never written over a change it did not read. `allow` is asked
+ * about the stored row inside the update (false answers `unknown-publisher`,
+ * as for a row the caller may not see). The badge of the publisher's apps
+ * follows at the next read on every core (`resolveClientValidation` reads the
+ * row at each offer).
+ */
+export async function decidePublisher (platform: PlatformDB, userId: string, decision: PublisherDecision):
+Promise<{ row: PublisherRecord; before: PublisherRecord | null; changed: boolean }> {
+  const idProblem = publisherIdProblem(userId);
+  if (idProblem != null) throw new PublisherDecisionError('invalid', 'userId ' + idProblem);
+  if (!PUBLISHER_STATUSES.includes(decision.status)) throw new PublisherDecisionError('invalid', 'status must be one of ' + PUBLISHER_STATUSES.join(', '));
+  if (decision.displayName != null) {
+    const problem = displayNameProblem(decision.displayName);
+    if (problem != null) throw new PublisherDecisionError('invalid', 'displayName ' + problem);
+  }
+  if (decision.regions != null) {
+    const problem = publisherRegionsProblem(decision.regions);
+    if (problem != null) throw new PublisherDecisionError('invalid', 'regions ' + problem);
+  }
+  const reasonProblem = reviewReasonProblem(decision.reason);
+  if (reasonProblem != null) throw new PublisherDecisionError('invalid', 'reason ' + reasonProblem);
+  if (typeof decision.by !== 'string' || decision.by.length === 0 || decision.by.length > 128) throw new Error('decidePublisher: by must be 1 to 128 characters');
+  const now = decision.now ?? Date.now();
+  let before: PublisherRecord | null = null;
+  const done = await updatePlatformKv(platform as unknown as AdminStore, PREFIX_PUBLISHER + userId, (raw) => {
+    before = parsePublisher(raw);
+    if (decision.allow != null && !decision.allow(before)) throw new PublisherDecisionError('unknown-publisher', 'no publisher ' + userId);
+    const next: PublisherRecord = { status: decision.status as PublisherStatus };
+    const displayName = decision.displayName === undefined ? before?.displayName : decision.displayName;
+    if (displayName != null) next.displayName = displayName;
+    const regions = decision.regions === undefined ? before?.regions : decision.regions;
+    if (regions != null) next.regions = regions;
+    const entry: PublisherLogEntry = { at: now, by: decision.by, from: before?.status ?? 'absent', to: next.status, reason: decision.reason };
+    next.statusLog = [...(before?.statusLog ?? []), entry].slice(-MAX_STATUS_LOG);
+    next.updatedAt = now;
+    return { next: JSON.stringify(next), result: next };
+  });
+  if (done == null) throw new Error('decidePublisher: no change made');
+  return { row: done.result, before, changed: done.after !== done.before };
 }
 
 /** The publisher row of an account, or null (absent or unreadable: not validated). A display name breaking the rules is dropped. */
@@ -375,7 +510,11 @@ export async function getPublisher (platform: PlatformDB, userId: string): Promi
   };
 }
 
-/** Write a publisher decision (operator tools and tests; the review routes come later). */
+/**
+ * Overwrite a publisher row with a bare decision, without trail nor
+ * compare-and-set (tests and tools seeding a state). Reviewers' decisions go
+ * through `decidePublisher`.
+ */
 export async function setPublisher (platform: PlatformDB, userId: string, row: PublisherRow): Promise<void> {
   if (typeof userId !== 'string' || userId.length === 0) throw new Error('setPublisher: userId required');
   if (!PUBLISHER_STATUSES.includes(row?.status)) throw new Error('setPublisher: status must be one of ' + PUBLISHER_STATUSES.join(', '));

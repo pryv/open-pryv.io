@@ -128,7 +128,7 @@ export async function persistMetadataClient (platform: PlatformDB, client: OAuth
 }
 
 /** The row as stored: validated, with `updatedAt`, a sanitized key set and no expired rotated secret. */
-function checkedClientRow (client: OAuthClient, updatedAt: number): OAuthClient {
+export function checkedClientRow (client: OAuthClient, updatedAt: number): OAuthClient {
   if (typeof client?.clientId !== 'string' || client.clientId.length === 0) {
     throw new Error('clientId required');
   }

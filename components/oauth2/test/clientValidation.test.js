@@ -78,6 +78,12 @@ function fakePlatform () {
     async deletePlatformKv (k) { kv.delete(k); },
     async listPlatformKvKeys (p) { return [...kv.keys()].filter((k) => k.startsWith(p)); },
     async listPlatformKvEntries (p) { return [...kv.entries()].filter(([k]) => k.startsWith(p)).map(([key, value]) => ({ key, value })); },
+    async setPlatformKvIfAbsent (k, v) { if (kv.has(k)) return false; kv.set(k, v); return true; },
+    async replacePlatformKvIfValue (k, expected, next) {
+      if (kv.get(k) !== expected) return false;
+      if (next == null) kv.delete(k); else kv.set(k, next);
+      return true;
+    },
     async setAccessState (k, v, exp) { state.set(k, { value: v, expiresAt: exp }); },
     async setAccessStateIfAbsent (k, v, exp) { if (state.has(k)) return false; state.set(k, { value: v, expiresAt: exp }); return true; },
     async getAccessState (k) { return state.get(k) ?? null; },
@@ -673,7 +679,7 @@ describe('[OCVL] OAuth2 client registration modes and validation levels', () => 
       assert.equal(v.error, null, v.error?.message);
       assert.match(v.out, /OK {3}client dev-app validated: level appValidated/);
       const row = await getClient(platform, 'dev-app');
-      assert.equal(row.validation.app.by, process.env.USER ?? 'operator');
+      assert.equal(row.validation.app.by, 'cli:' + (process.env.USER ?? 'operator'));
       assert.equal(row.validation.app.by, row.statusLog.at(-1).by);
       assert.equal(row.validation.app.v, 1);
       assert.equal(row.validation.app.digest, cv.validationDigest(row));
