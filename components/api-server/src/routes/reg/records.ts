@@ -33,6 +33,7 @@ const { isPlatformNoAnswer } = require('storages/interfaces/platformStorage/noAn
 const { clientIp } = require('middleware/src/clientIp.ts');
 const { redactUrl } = require('utils/src/redactUrl.ts');
 const { getLogger } = require('@pryv/boiler');
+const { adminKeyAct, adminRoute, setRouteAct } = require('../../methods/helpers/adminAudit.ts') as typeof import('../../methods/helpers/adminAudit.ts');
 
 const logger = getLogger('routes:reg:records');
 
@@ -62,7 +63,8 @@ export default function (expressApp: ExpressApp, app: AppLike) {
     }
   }
 
-  expressApp.post('/reg/records', async (req: Request, res: Response, next: NextFunction) => {
+  // An authorized write is an administration act: recorded in the platform trail, done or refused.
+  expressApp.post('/reg/records', adminKeyAct('system.reg.records.set', app.config), adminRoute(), async (req: Request, res: Response, next: NextFunction) => {
     if (!isAuthorized(req)) return next(errors.unknownResource());
 
     // Express 4 does not observe a rejected async handler: every step that
@@ -89,6 +91,8 @@ export default function (expressApp: ExpressApp, app: AppLike) {
       }
       subdomain = given.subdomain;
       records = given.records;
+      // The name and the kinds of record, not their values.
+      setRouteAct(res, { target: { subdomain: subdomain.slice(0, 256) }, diff: { recordTypes: Object.keys(records).slice(0, 20) } });
       const problems = validateDnsRecord(subdomain, records);
       if (problems.length > 0) {
         return res.status(400).json({
@@ -124,7 +128,7 @@ export default function (expressApp: ExpressApp, app: AppLike) {
     res.status(200).json({ subdomain, records, status: 'ok' });
   });
 
-  expressApp.delete('/reg/records/:subdomain', async (req: Request, res: Response, next: NextFunction) => {
+  expressApp.delete('/reg/records/:subdomain', adminKeyAct('system.reg.records.delete', app.config), adminRoute(), async (req: Request, res: Response, next: NextFunction) => {
     if (!isAuthorized(req)) return next(errors.unknownResource());
 
     const { subdomain } = req.params;
@@ -133,6 +137,7 @@ export default function (expressApp: ExpressApp, app: AppLike) {
         error: { id: 'invalid-parameters', message: 'Missing or invalid subdomain' }
       });
     }
+    setRouteAct(res, { target: { subdomain: subdomain.slice(0, 256) } });
 
     let platform;
     try {

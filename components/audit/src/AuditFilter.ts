@@ -9,7 +9,7 @@ const require = createRequire(import.meta.url);
 
 const validation = require('./validation.ts');
 
-type FilterEntry = { syslog?: true; storage?: true; platformTrail?: true; platformTrailValidOnly?: true } | false;
+type FilterEntry = { syslog?: true; storage?: true; platformTrail?: true; platformTrailValidOnly?: true; platformTrailAdminOnly?: true } | false;
 type FilterParam = { methods: { include: string[]; exclude: string[] } };
 
 const {
@@ -20,19 +20,32 @@ const {
 } = require('./ApiMethods.ts');
 
 /**
+ * Public ids that are an administration act when an administrator makes the
+ * call: an account erased with the admin key (`DELETE /users/:username`).
+ * Selected through `admin-acts`, a call is kept in the platform trail only
+ * when its record names an administrator as its subject (a deletion by the
+ * account's holder is not an administration act); naming the id (or `all`)
+ * keeps every call.
+ */
+export const ADMIN_SUBJECT_METHODS: readonly string[] = Object.freeze(['auth.delete']);
+/**
  * The group naming the administration acts in a filter: the audited calls
  * without an account of the core whose id starts with `system.` (the /system
- * methods and routes) or `admin.`. The default of `audit.platformTrail.filter`.
+ * methods and routes) or `admin.`, and `ADMIN_SUBJECT_METHODS`. The default
+ * of `audit.platformTrail.filter`.
  */
 export const ADMIN_ACTS = 'admin-acts';
 const PLATFORM_TRAIL_BASE: string[] = AUDITED_METHODS.filter((m: string) => WITHOUT_USER_METHODS.includes(m));
-export const ADMIN_ACT_METHODS: readonly string[] = Object.freeze(PLATFORM_TRAIL_BASE.filter((m) => m.startsWith('system.') || m.startsWith('admin.')));
+export const ADMIN_ACT_METHODS: readonly string[] = Object.freeze(PLATFORM_TRAIL_BASE.filter((m) => m.startsWith('system.') || m.startsWith('admin.') || ADMIN_SUBJECT_METHODS.includes(m)));
 /**
- * Administration ids an unauthenticated caller can reach (a setup code tried):
- * selected through `admin-acts`, only their done calls are kept in the
- * platform trail; naming them (or `all`) keeps their refusals too.
+ * Administration ids an unauthenticated caller can reach (a setup code tried,
+ * an account deletion without a credential): selected through `admin-acts`,
+ * only their done calls are kept in the platform trail; naming them (or
+ * `all`) keeps their refusals too.
  */
-export const PUBLIC_REFUSAL_METHODS: readonly string[] = Object.freeze(['system.setup.createSession']);
+export const PUBLIC_REFUSAL_METHODS: readonly string[] = Object.freeze(['system.setup.createSession', 'auth.delete']);
+/** The subjects (`content.record.subject.via`) of an administrator. */
+export const ADMIN_SUBJECT_VIAS: readonly string[] = Object.freeze(['admin-key', 'session', 'setup']);
 export const DEFAULT_PLATFORM_TRAIL_FILTER: FilterParam = Object.freeze({ methods: Object.freeze({ include: [ADMIN_ACTS], exclude: [] }) }) as FilterParam;
 
 class AuditFilter {
@@ -44,7 +57,9 @@ class AuditFilter {
    * `audit:storage:filter`); `platformTrail`: kept in the trail of this core's
    * acts (methods without a user), when both `audit:platformTrail:filter`
    * (default: the administration acts) and `audit:storage:filter` select it;
-   * `platformTrailValidOnly`: its refused calls are not kept there.
+   * `platformTrailValidOnly`: its refused calls are not kept there;
+   * `platformTrailAdminOnly`: kept there only when its record names an
+   * administrator as its subject (`ADMIN_SUBJECT_METHODS`).
    */
   filter: { methods: Record<string, FilterEntry> };
 
@@ -88,12 +103,13 @@ class AuditFilter {
     const methodsFullFilter: Record<string, FilterEntry> = {};
     for (let i = 0; i < ALL_METHODS.length; i++) {
       const m = ALL_METHODS[i];
-      let methodFilter: { syslog?: true; storage?: true; platformTrail?: true; platformTrailValidOnly?: true } | false = {};
+      let methodFilter: { syslog?: true; storage?: true; platformTrail?: true; platformTrailValidOnly?: true; platformTrailAdminOnly?: true } | false = {};
       if (syslogFilter.methods[m]) methodFilter.syslog = true;
       if (storageFilter.methods[m]) methodFilter.storage = true;
       if (storedWithoutUser[m] && platformTrailSelected[m]) {
         methodFilter.platformTrail = true;
         if (PUBLIC_REFUSAL_METHODS.includes(m) && !isNamed(m)) methodFilter.platformTrailValidOnly = true;
+        if (ADMIN_SUBJECT_METHODS.includes(m) && !isNamed(m)) methodFilter.platformTrailAdminOnly = true;
       }
       if (Object.keys(methodFilter).length === 0) methodFilter = false;
       methodsFullFilter[m] = methodFilter;

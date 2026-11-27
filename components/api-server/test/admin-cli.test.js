@@ -214,4 +214,38 @@ describe('[ADMC] bin/admin.js', function () {
     assert.strictEqual(runCli(['audit', 'tail', '--method', 'bad method']).status, 1);
     assert.strictEqual(runCli(['audit', 'tail', 'extra']).status, 2);
   });
+
+  it('[ADMC9] each act of the tool leaves a platform-trail record: subject cli with the OS user, the account by id, role and scope, never a code', async function () {
+    const config = await require('@pryv/boiler').getConfig();
+    const storage = require('storages').auditStorage;
+    if (config.get('audit:active') !== true || storage?.acceptsPlatformTrail?.() !== true) return this.skip();
+    const { PLATFORM_TRAIL_USER_ID } = require('storages/interfaces/auditStorage/AuditStorage.ts');
+    const since = Date.now() / 1000 - 1;
+    const recordsOf = async (methodId) => {
+      const trail = await storage.forUser(PLATFORM_TRAIL_USER_ID);
+      return (await trail.getEvents({ query: [{ type: 'streamsQuery', content: [[{ any: ['action-' + methodId] }]] }] })).filter((e) => e.time >= since);
+    };
+    const id = 'adcl-trail-' + Date.now();
+    assert.strictEqual(runCli(['roles', 'grant', id, '--role', 'viewer', '--scope', 'platform']).status, 0);
+    assert.strictEqual(runCli(['sessions', 'revoke', id]).status, 0);
+    assert.strictEqual(runCli(['roles', 'revoke', id]).status, 0);
+    const claim = runCli(['claim-code', '--role', 'support', '--scope', 'platform']);
+    assert.strictEqual(claim.status, 0, claim.stderr);
+    const code = CODE_RE.exec(claim.stdout)[0];
+    const [granted] = await recordsOf('admin.cli.role.granted');
+    assert.ok(granted != null, 'grant recorded');
+    assert.ok(granted.streamIds.includes('access-admin-cli'), JSON.stringify(granted.streamIds));
+    assert.strictEqual(granted.content.record.subject.via, 'cli');
+    assert.strictEqual(typeof granted.content.record.subject.osUser, 'string');
+    assert.deepStrictEqual(granted.content.record.target, { userId: id });
+    assert.deepStrictEqual(granted.content.record.diff, { role: 'viewer', scope: 'platform' });
+    assert.deepStrictEqual((await recordsOf('admin.cli.sessions.revoked')).map((e) => e.content.record.target), [{ userId: id }]);
+    assert.deepStrictEqual((await recordsOf('admin.cli.role.deleted')).map((e) => e.content.record.target), [{ userId: id }]);
+    const [minted] = await recordsOf('admin.cli.claimCode.created');
+    assert.ok(minted != null, 'claim code recorded');
+    assert.strictEqual(minted.content.record.diff.role, 'support');
+    assert.ok(!JSON.stringify(minted).includes(code) && !JSON.stringify(minted).includes(code.replace(/-/g, '')), 'never the code');
+    const tail = runCli(['audit', 'tail', '--method', 'admin.cli.role.granted', '--since', '10m']);
+    assert.match(tail.stdout, /admin\.cli\.role\.granted {2}done {2}by cli/);
+  });
 });

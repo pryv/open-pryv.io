@@ -15,6 +15,8 @@ const CONSTANTS = require('./Constants.ts').default;
 const validation = require('./validation.ts');
 const { WITHOUT_USER_METHODS_MAP } = require('./ApiMethods.ts');
 const AuditFilter = require('./AuditFilter.ts').default;
+const { ADMIN_SUBJECT_VIAS } = require('./AuditFilter.ts') as { ADMIN_SUBJECT_VIAS: readonly string[] };
+const { scrubAccountNames } = require('business/src/admin/accountNames.ts') as typeof import('business/src/admin/accountNames.ts');
 const { AuditAccessIds } = require('./MethodContextUtils.ts');
 const lossCounter = require('./lossCounter.ts');
 const { isErasedAccountRefusal } = require('./erasedAccountRefusal.ts') as typeof import('./erasedAccountRefusal.ts');
@@ -57,7 +59,7 @@ type AuditEventLike = {
   type?: string;
   content: { record?: unknown; source?: unknown; action?: string; query?: unknown; id?: string; message?: string; callerId?: string; recordCount?: number; recordCountIncomplete?: boolean; scopedStreamIds?: string[]; scopedStreamCount?: number; delegation?: { delegateUsername?: string; delegateHostSlug?: string } };
 };
-type Destinations = { syslog?: boolean; storage?: boolean; platformTrail?: boolean; platformTrailValidOnly?: boolean };
+type Destinations = { syslog?: boolean; storage?: boolean; platformTrail?: boolean; platformTrailValidOnly?: boolean; platformTrailAdminOnly?: boolean };
 type AuditFilterLike = { isAudited (methodId: string): Destinations | boolean };
 type SyslogLike = { eventForUser (userId: string | undefined, event: AuditEventLike): unknown };
 type AuditStorage = {
@@ -236,11 +238,13 @@ class Audit {
     let reason: LossReason = 'invalid-record';
     let silentLoss: LossReason | null = null;
     try {
-      const { syslog, storage, platformTrail, platformTrailValidOnly } = this.#checked(userId, event);
+      const { syslog, storage, platformTrail, platformTrailValidOnly, platformTrailAdminOnly } = this.#checked(userId, event);
       // Where the stored copy goes: the account's own trail, or for a call
       // without an account the platform trail, when the storage keeps it and
       // `audit.platformTrail.filter` selects it (else syslog only).
-      const inPlatformTrail = platformTrail === true && this.#keepsPlatformTrail && !(platformTrailValidOnly === true && kind === 'error');
+      const inPlatformTrail = platformTrail === true && this.#keepsPlatformTrail &&
+        !(platformTrailValidOnly === true && kind === 'error') &&
+        !(platformTrailAdminOnly === true && !byAdministrator(event));
       const storedUnder = storage ? userId : (inPlatformTrail ? PLATFORM_TRAIL_USER_ID : null);
       if (this.syslog && syslog) {
         try {
@@ -300,7 +304,7 @@ class Audit {
    */
   async #storePlatformTrail (storage: AuditStorage, event: AuditEventLike): Promise<void> {
     const trail = await storage.forUser(PLATFORM_TRAIL_USER_ID);
-    await trail.createEvent(event);
+    await trail.createEvent(forPlatformTrail(event));
   }
 
   /** Validates the record, gives it an id, and tells where it has to go. */
@@ -352,6 +356,44 @@ function recordedSource (source: unknown): unknown {
   if (source == null || typeof source !== 'object' || (source as { ip?: unknown }).ip !== null) return source;
   const { ip: _ip, ...rest } = source as { ip: null };
   return rest;
+}
+
+/** Whether the record names an administrator (the admin key, a session, setup) as who acted. */
+function byAdministrator (event: AuditEventLike): boolean {
+  const record = event.content.record as { subject?: { via?: unknown } } | null | undefined;
+  const via = record?.subject?.via;
+  return typeof via === 'string' && ADMIN_SUBJECT_VIAS.includes(via);
+}
+
+/** A message the platform trail keeps: the HTTP status of a refused act served by a handler (no input in it). */
+const PLATFORM_TRAIL_MESSAGE_RE = /^HTTP \d{0,3}$/;
+
+type RecordParts = { target?: unknown; diff?: unknown; [k: string]: unknown };
+const asParts = (v: unknown): Record<string, unknown> | undefined => v != null && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : undefined;
+
+/**
+ * The copy of a record the platform trail stores, whoever the subject and
+ * whatever selected it: no account name in clear (the trail outlives the
+ * accounts it names and is outside their erasure). The error message goes
+ * (it may quote the input: a username, an email; `content.id` says what was
+ * refused), but for the static `HTTP <status>` of a handler refusal; the query,
+ * the record's target and diff and the delegation stamp hold keyed hashes in
+ * place of usernames. Syslog keeps the record as it is.
+ */
+function forPlatformTrail (event: AuditEventLike): AuditEventLike {
+  const content = { ...event.content };
+  if (content.message != null && !(typeof content.message === 'string' && PLATFORM_TRAIL_MESSAGE_RE.test(content.message))) delete content.message;
+  const query = asParts(content.query);
+  if (query != null) content.query = scrubAccountNames(query);
+  const record = asParts(content.record) as RecordParts | undefined;
+  if (record != null && (asParts(record.target) != null || asParts(record.diff) != null)) {
+    const scrubbed: RecordParts = { ...record };
+    if (asParts(record.target) != null) scrubbed.target = scrubAccountNames(asParts(record.target));
+    if (asParts(record.diff) != null) scrubbed.diff = scrubAccountNames(asParts(record.diff));
+    content.record = scrubbed;
+  }
+  if (content.delegation != null) content.delegation = scrubAccountNames(content.delegation as Record<string, unknown>) as unknown as AuditEventLike['content']['delegation'];
+  return { ...event, content };
 }
 
 /**

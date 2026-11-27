@@ -126,6 +126,73 @@ describe('[APTR] platform trail', function () {
     }
   });
 
+  const ALL = { methods: { include: ['all'], exclude: [] } };
+
+  it('[APTR6] the platform trail stores no account name, whatever selected the record: the message goes (but a handler status), the query, target, diff and delegation hold keyed hashes', async function () {
+    const name = 'aptrname' + cuid().toLowerCase().replace(/[^a-z0-9]/g, '').slice(-8);
+    const email = name + '@example.com';
+    const saved = audit.filter;
+    audit.filter = new AuditFilter({ syslogFilter: ALL, storageFilter: ALL, platformTrailFilter: ALL });
+    try {
+      const event = fakeAuditEvent('auth.register');
+      event.type = 'audit-log/pryv-api-error';
+      event.content.id = 'item-already-exists';
+      event.content.message = 'A user with username "' + name + '" already exists; email taken: ' + email;
+      event.content.query = { username: name, search: name, other: 1 };
+      event.content.record = { subject: { via: 'public' }, target: { username: name }, diff: { delegateUsername: name } };
+      event.content.delegation = { delegateUsername: name, delegateHostSlug: 'aptr-host' };
+      await audit.eventForUser(undefined, event, 'auth.register', 'error');
+      const stored = await (await audit.storage.forUser(PT)).getOneEvent(event.id);
+      assert.ok(stored != null, 'stored (named by the filter)');
+      const text = JSON.stringify(stored);
+      assert.ok(!text.includes(name), 'no username in clear: ' + text);
+      assert.ok(!text.includes(email), 'no email');
+      assert.equal(stored.content.message, undefined, 'the message goes');
+      assert.equal(stored.content.id, 'item-already-exists', 'what was refused stays');
+      assert.equal(stored.content.query.other, 1);
+      assert.equal(stored.content.delegation.delegateHostSlug, 'aptr-host');
+      if (stored.content.query.usernameHash != null) { // a hash key is configured
+        assert.match(stored.content.query.usernameHash, /^[0-9a-f]{64}$/);
+        assert.match(stored.content.query.hashKeyId, /^[0-9a-f]{8}$/, 'the id of the key that made the hash');
+        assert.equal(stored.content.record.target.usernameHash, stored.content.query.usernameHash);
+        assert.equal(stored.content.record.diff.delegateUsernameHash, stored.content.query.usernameHash);
+      }
+      assert.ok(event.content.message.includes(name), 'the record handed over (the syslog copy) is unchanged');
+
+      const handler = fakeAuditEvent('system.users.delete');
+      handler.type = 'audit-log/pryv-api-error';
+      handler.content.message = 'HTTP 404';
+      await audit.eventForUser(undefined, handler, 'system.users.delete', 'error');
+      assert.equal((await (await audit.storage.forUser(PT)).getOneEvent(handler.id)).content.message, 'HTTP 404', 'a handler status has no input in it: kept');
+    } finally {
+      audit.filter = saved;
+    }
+  });
+
+  it('[APTR7] auth.delete through `admin-acts`: kept when an administrator made the call, done; not a deletion by the holder nor a refusal; named, every call', async function () {
+    const saved = audit.filter;
+    const deletion = (via, kind = 'valid') => {
+      const e = fakeAuditEvent('auth.delete');
+      e.content.record = { subject: via === 'personal-token' ? { via, userId: 'aptr-holder' } : { via }, target: { userId: 'aptr-target' } };
+      return { e, kind };
+    };
+    const stores = async (d) => {
+      await audit.eventForUser(undefined, d.e, 'auth.delete', d.kind);
+      return await trailHas(d.e.id);
+    };
+    try {
+      audit.filter = new AuditFilter({ syslogFilter: ALL, storageFilter: ALL }); // default platform trail filter
+      assert.equal(await stores(deletion('admin-key')), true, 'erased with the admin key: an administration act');
+      assert.equal(await stores(deletion('personal-token')), false, 'erased by its holder: not an administration act');
+      assert.equal(await stores(deletion('admin-key', 'error')), false, 'a refusal: anyone can call the route');
+      audit.filter = new AuditFilter({ syslogFilter: ALL, storageFilter: ALL, platformTrailFilter: { methods: { include: ['admin-acts', 'auth.delete'], exclude: [] } } });
+      assert.equal(await stores(deletion('personal-token')), true, 'named: every call');
+      assert.equal(await stores(deletion('admin-key', 'error')), true, 'named: its refusals too');
+    } finally {
+      audit.filter = saved;
+    }
+  });
+
   it('[APTR5] the reserved id is not an account: no users-index entry, never deleted as one', async function () {
     const { getUsersLocalIndex } = require('storage');
     const index = await getUsersLocalIndex();

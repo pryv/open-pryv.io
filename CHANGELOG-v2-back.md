@@ -43,6 +43,24 @@
 - `methods/helpers/adminAudit.ts`: `scrubAccountNames` replaces `username` / `delegateUsername` / `search` in a
   record's target, diff and recorded query by `usernameHash` / `delegateUsernameHash` / `searchHash` (the erasure
   ledger's `usernameHash` and key); `auditTarget` and `adminRoute` add the account id of a username of this core.
+- `business/src/admin/accountNames.ts` (new): `scrubAccountNames` and `accountNameHash` moved out of the api-server
+  helper (which re-exports `scrubAccountNames`), now also adding `hashKeyId`; used by the helper, by
+  `Audit.eventForUser` and by the account deletion.
+- `Audit.eventForUser`: a record stored under the platform-trail id goes through `forPlatformTrail` (message dropped
+  but a `HTTP <status>`, query, target, diff and delegation stamp scrubbed), independent of the record's subject;
+  the caller-side masking stays as defence in depth. `AuditFilter`: `ADMIN_SUBJECT_METHODS` (`auth.delete`) join
+  `admin-acts`; selected through the group they carry `platformTrailAdminOnly` (stored only when the record's
+  `subject.via` is `admin-key`, `session` or `setup`), and `auth.delete` joins `PUBLIC_REFUSAL_METHODS`.
+  `Deletion.checkIfAuthorized` / `validateUserExists` set the record (`subject`, then `target`).
+- `bin/admin.js` `storeAct`: writes its acts' records straight to the audit storage's platform trail (the
+  configured filters applied); ids `admin.cli.*` in `audit/src/apiMethods/adminRoles.ts` (`CLI_ACTS`).
+- `/reg` admin writes: `adminKeyAct(methodId, config)` (a request authorized by the admin key in full scope gets the
+  context of an administration act) before `adminRoute()`, and `setRouteAct(res, details)`; ids `system.reg.*` in
+  `audit/src/apiMethods/adminAudit.ts`.
+- `readPlatformTrail` answers `scannedToTime` with `scanLimitReached`.
+- Tests: audit `[AFPT1]` `[AFPT2]` `[AFPT4]` `[AFID]`, `[APTR6]` (platform-trail copy), `[APTR7]` (`auth.delete`
+  through `admin-acts`); api-server `[SYAU9]` (admin-key deletion), `[SYAU10]` (opted-in refused registrations of a
+  taken username and email), `[SYAU11]` (`scannedToTime`), `[SYAU12]` (`/reg` writes), `[ADMC9]` (CLI acts).
 - `system.claimCodes.create`, `system.roles.claim` and `system.setup.createFirstAdmin` set the record's target and
   diff before their write, as `system.roles.set` / `delete` do. `RestoreOrchestrator` refuses the reserved id
   `platform-trail` as a manifest user id or a remap target.

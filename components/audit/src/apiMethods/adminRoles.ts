@@ -16,18 +16,32 @@
  * trail (emitted directly via audit.eventForUser() when the account is on the
  * core where the act ran); the acting administrator's trail gets
  * `admin.role.created` / `admin.role.deleted` (../ApiMethods.ts).
+ *
+ * `admin.cli.*`: the acts of `bin/admin.js` (run from a core's shell, outside
+ * the server), written by the tool itself in the platform trail with
+ * `subject: { via: 'cli', osUser }` (they are in the `admin-acts` group).
  */
+export const CLI_ACTS: readonly string[] = Object.freeze([
+  'admin.cli.setupCode.replaced',
+  'admin.cli.setup.finished',
+  'admin.cli.claimCode.created',
+  'admin.cli.role.granted',
+  'admin.cli.role.deleted',
+  'admin.cli.sessions.revoked'
+]);
 export const all: readonly string[] = Object.freeze([
   'system.roles.set',
   'system.roles.get',
   'system.roles.getByUsername',
   'admin.role.granted',
-  'admin.role.revoked'
+  'admin.role.revoked',
+  ...CLI_ACTS
 ]);
 export const notAudited: readonly string[] = Object.freeze([
   'system.roles.get',
   'system.roles.getByUsername'
 ]);
 export const withoutUser: readonly string[] = Object.freeze([
-  'system.roles.set'
+  'system.roles.set',
+  ...CLI_ACTS
 ]);

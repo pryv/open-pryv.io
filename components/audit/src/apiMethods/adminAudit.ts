@@ -30,6 +30,12 @@ export const all: readonly string[] = Object.freeze([
   'system.delegation.invite',
   'system.delegation.createAccount',
   'system.cores.ack',
+  // Writes with the admin key outside /system (legacy register routes and
+  // DNS records), recorded the same way.
+  'system.reg.servers.rename',
+  'system.reg.invitations.create',
+  'system.reg.records.set',
+  'system.reg.records.delete',
   // An administration act, in the acting administrator's own trail (an
   // administrator session whose account is on this core).
   'admin.act',
@@ -57,6 +63,10 @@ export const withoutUser: readonly string[] = Object.freeze([
   'system.delegation.invite',
   'system.delegation.createAccount',
   'system.cores.ack',
+  'system.reg.servers.rename',
+  'system.reg.invitations.create',
+  'system.reg.records.set',
+  'system.reg.records.delete',
   // Declared in ../ApiMethods.ts: an admin read of an account's data goes to
   // the platform trail (and to the account's trail, `account.readByAdmin`).
   'system.getUserInfo',

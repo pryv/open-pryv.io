@@ -4,6 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /* global validation, assert, apiMethods, AuditFilter */
 
 describe('[AFLT] AuditFilter', () => {
@@ -23,6 +25,8 @@ describe('[AFLT] AuditFilter', () => {
       assert.deepStrictEqual(f.isAudited('system.roles.set'), { syslog: true, platformTrail: true });
       assert.deepStrictEqual(f.isAudited('system.users.delete'), { syslog: true, platformTrail: true }, 'a /system handler id');
       assert.deepStrictEqual(f.isAudited('system.setup.createSession'), { syslog: true, platformTrail: true, platformTrailValidOnly: true });
+      // An account erased with the admin key: done calls whose record names an administrator.
+      assert.deepStrictEqual(f.isAudited('auth.delete'), { syslog: true, platformTrail: true, platformTrailValidOnly: true, platformTrailAdminOnly: true });
       for (const m of ['auth.register', 'oauth.consent.shown', 'oauth.token.exchange_refused', 'sso.refused', 'mfa.recover']) {
         assert.deepStrictEqual(f.isAudited(m), { syslog: true }, m);
       }
@@ -36,6 +40,8 @@ describe('[AFLT] AuditFilter', () => {
       f = make(buildFilter(['all']));
       assert.strictEqual(f.isAudited('sso.refused').platformTrail, true);
       assert.strictEqual(f.isAudited('system.setup.createSession').platformTrailValidOnly, undefined);
+      f = make(buildFilter(['admin-acts', 'auth.delete']));
+      assert.deepStrictEqual(f.isAudited('auth.delete'), { syslog: true, platformTrail: true }, 'named: every call, refusals and deletions by the holder too');
       f = make(buildFilter(['admin-acts'], ['system.roles.set']));
       assert.strictEqual(f.isAudited('system.roles.set').platformTrail, undefined);
       f = make(undefined, buildFilter(['all'], ['system.roles.delete']));
@@ -44,6 +50,17 @@ describe('[AFLT] AuditFilter', () => {
     it('[AFPT3] "admin-acts" is a known name; a malformed platform trail filter is refused', () => {
       assert.deepStrictEqual(validation.unknownFilterMethods(buildFilter(['admin-acts'])), []);
       assert.throws(() => make({ methods: { include: [12], exclude: [] } }));
+    });
+    it('[AFPT4] "admin-acts" holds every administration id without a user: the per-area lists, the shell tool\'s acts, the admin-key writes under /reg, auth.delete', () => {
+      const { ADMIN_ACT_METHODS } = require('audit/src/AuditFilter.ts');
+      const areas = ['adminAudit', 'adminRoles', 'platformConfig', 'adminOauth'].map((a) => require('audit/src/apiMethods/' + a + '.ts'));
+      for (const area of areas) {
+        for (const m of area.withoutUser) assert.ok(ADMIN_ACT_METHODS.includes(m) || area.notAudited.includes(m), m);
+      }
+      for (const m of ['admin.cli.role.granted', 'admin.cli.role.deleted', 'admin.cli.claimCode.created', 'admin.cli.sessions.revoked', 'system.reg.servers.rename', 'system.reg.invitations.create', 'system.reg.records.set', 'system.reg.records.delete', 'auth.delete']) {
+        assert.ok(ADMIN_ACT_METHODS.includes(m), m);
+      }
+      for (const m of ['auth.register', 'mfa.recover', 'sso.refused']) assert.ok(!ADMIN_ACT_METHODS.includes(m), m);
     });
   });
   describe('[AF01] validation', () => {
@@ -205,7 +222,8 @@ describe('[AFLT] AuditFilter', () => {
       // public traffic without an account (the platform trail keeps the administration acts).
       const defaults = selected(new AuditFilter());
       assert.deepStrictEqual(defaults.syslog, apiMethods.AUDITED_METHODS);
-      const publicTraffic = apiMethods.WITHOUT_USER_METHODS.filter((m) => !m.startsWith('system.') && !m.startsWith('admin.'));
+      const { ADMIN_ACT_METHODS } = require('audit/src/AuditFilter.ts');
+      const publicTraffic = apiMethods.WITHOUT_USER_METHODS.filter((m) => !ADMIN_ACT_METHODS.includes(m));
       assert.deepStrictEqual(defaults.stored, apiMethods.AUDITED_METHODS.filter((m) => !publicTraffic.includes(m)));
       assert.ok(publicTraffic.includes('auth.register') && !defaults.stored.includes('auth.register'));
       assert.deepStrictEqual(selected(both(buildFilter(['all'], ['all']))), { syslog: [], stored: [] });
