@@ -85,6 +85,17 @@ type IntegrityStatus = { clear: number; sealedCurrentKey: number; sealedOtherKey
 const CLEAR_INTEGRITY_WHERE = 'integrity IS NOT NULL AND integrity NOT LIKE \'sealed:%\'';
 /** The rows whose `integrity` is sealed; predicate of `idx_access_integrity_kid`. */
 const SEALED_INTEGRITY_WHERE = 'integrity LIKE \'sealed:%\'';
+/** Accesses whose unreadable integrity was logged by this process (once each, bounded). */
+const unreadableIntegrityLogged = new Set<string>();
+function logUnreadableIntegrityOnce (userId: unknown, accessId: unknown, reason: string): void {
+  const key = JSON.stringify([userId, accessId]);
+  if (unreadableIntegrityLogged.has(key)) return;
+  if (unreadableIntegrityLogged.size >= 10000) unreadableIntegrityLogged.clear();
+  unreadableIntegrityLogged.add(key);
+  logger.error('access ' + JSON.stringify(accessId) + ' of user ' + JSON.stringify(userId) +
+    ': stored integrity unreadable, returned without it (' + reason + ')');
+}
+
 /** Length of `sealed:<kid>.` for an 8-character key id: the expression of `idx_access_integrity_kid`. */
 function sealedPrefixLength (kid: string): number {
   return SEALED_PREFIX.length + keyIdPrefixLength(kid);
@@ -175,9 +186,14 @@ class AccessesPG extends BaseStoragePG<AccessItem> {
     return out ?? query;
   }
 
-  /** A written `integrity` value as stored (sealed); anything else as given. */
+  /**
+   * A written `integrity` value as stored: every string is sealed, a
+   * `sealed:`-looking one included (an item or update never carries a stored
+   * form: such a value reads back as the same public string). Anything else
+   * as given.
+   */
   sealedIntegrity (userId: string, value: unknown): unknown {
-    if (typeof value !== 'string' || isSealedValue(value)) return value;
+    if (typeof value !== 'string') return value;
     return this.tokenProtection.sealAccessIntegrity(userId, value);
   }
 
@@ -192,8 +208,7 @@ class AccessesPG extends BaseStoragePG<AccessItem> {
       if (typeof userId !== 'string') throw new Error('the row has no user id');
       return this.tokenProtection.openAccessIntegrity(userId, stored);
     } catch (err) {
-      logger.error('access ' + JSON.stringify(accessId) + ' of user ' + JSON.stringify(userId) +
-        ': stored integrity unreadable, returned without it (' + (err as Error).message + ')');
+      logUnreadableIntegrityOnce(userId, accessId, (err as Error).message);
       return undefined;
     }
   }
@@ -241,8 +256,7 @@ class AccessesPG extends BaseStoragePG<AccessItem> {
 
   /** The item as stored: `token` replaced by its pair, `integrity` sealed (in place, key order kept). */
   toStorageItem (userId: string, item: AccessItem): AccessItem {
-    const sealIntegrity = typeof item.integrity === 'string' && !isSealedValue(item.integrity);
-    if (item.token == null && !sealIntegrity) return item;
+    if (item.token == null && typeof item.integrity !== 'string') return item;
     const pair = item.token != null ? this.protectedColumns(userId, item.token) : null;
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(item)) {
@@ -372,7 +386,7 @@ class AccessesPG extends BaseStoragePG<AccessItem> {
           this._updateManyOn(client, userOrUserId, query, updateData,
             (err: Error | null, r?: { modifiedCount: number }) => err ? reject(err) : resolve(r!));
         });
-        await this.dropTokensOfDeletedRowsOn(client, userId);
+        await this.dropTokensOfDeletedRowsOn(client, userId, now);
         return res;
       }).then((payload) => callback(null, payload), (err: Error) => callback(err));
       return;
@@ -413,7 +427,7 @@ class AccessesPG extends BaseStoragePG<AccessItem> {
         logger.error('Issue when adding integrity to deleted accesses for ' +
           JSON.stringify(userId) + ' counts do not match');
       }
-      await this.dropTokensOfDeletedRowsOn(client, userId);
+      await this.dropTokensOfDeletedRowsOn(client, userId, now);
       // Deliver the contract payload (delete count under `modifiedCount`,
       // like the non-integrity path and the SQLite twin) — not the raw
       // recompute result.
@@ -813,16 +827,20 @@ class AccessesPG extends BaseStoragePG<AccessItem> {
    * Seal every `integrity` still stored in clear (live, deleted, history
    * rows; also those written while integrity was active and kept since). One
    * compare-and-set statement per batch on the clear value of each row, so a
-   * crash leaves each row either old or new and a re-run continues; rows
-   * another process sealed meanwhile leave the selection. Idempotent.
+   * crash leaves each row either old or new and a re-run continues. Batches
+   * follow the primary key (keyset), so no batch reads the rows already
+   * sealed, index or not; a row another process sealed or changed meanwhile
+   * is skipped (the next start sees it if it is still clear). Idempotent.
    */
   async sealClearIntegrityRows (): Promise<TokenPassResult> {
     const result: TokenPassResult = { rows: 0, skipped: 0 };
     const batchSize = this.tokenBatchSize;
-    let idleFirstRow: string | null = null;
+    let after: [string, string] | null = null;
     for (;;) {
-      const res = await this.db.query(
-        'SELECT user_id, id, integrity FROM accesses WHERE ' + CLEAR_INTEGRITY_WHERE + ' ORDER BY user_id, id LIMIT $1', [batchSize]);
+      const res: { rows: AccessRow[] } = await this.db.query(
+        'SELECT user_id, id, integrity FROM accesses WHERE ' + CLEAR_INTEGRITY_WHERE +
+        (after != null ? ' AND (user_id, id) > ($2, $3)' : '') + ' ORDER BY user_id, id LIMIT $1',
+        after != null ? [batchSize, after[0], after[1]] : [batchSize]);
       if (res.rows.length === 0) break;
       const sealed = res.rows.map((row) => this.tokenProtection.sealAccessIntegrity(row.user_id as string, row.integrity as string));
       const upd = await this.db.query(
@@ -831,16 +849,10 @@ class AccessesPG extends BaseStoragePG<AccessItem> {
         'WHERE a.user_id = v.uid AND a.id = v.id AND a.integrity = v.clr',
         [res.rows.map((r) => r.user_id), res.rows.map((r) => r.id), res.rows.map((r) => r.integrity), sealed]);
       result.rows += upd.rowCount;
-      if (upd.rowCount === 0) {
-        // Another process sealed these rows meanwhile (or changed them): select
-        // again; the same first row twice with no progress ends the pass.
-        const first = JSON.stringify([res.rows[0].user_id, res.rows[0].id, res.rows[0].integrity]);
-        if (first === idleFirstRow) break;
-        idleFirstRow = first;
-        continue;
-      }
-      idleFirstRow = null;
+      result.skipped += res.rows.length - upd.rowCount;
       if (res.rows.length < batchSize) break;
+      const last = res.rows[res.rows.length - 1];
+      after = [last.user_id as string, last.id as string];
     }
     if (result.rows > 0) logger.info('access integrity at rest: ' + result.rows + ' access rows sealed');
     return result;
@@ -904,18 +916,33 @@ class AccessesPG extends BaseStoragePG<AccessItem> {
     });
   }
 
-  /** Re-seal under the configured key the `integrity` values sealed under one of `previous`. */
-  async rekeyIntegrityRows (previous: TokenProtection[]): Promise<TokenPassResult> {
-    return await this._eachIntegrityRow(SEALED_INTEGRITY_WHERE, async (row) => {
+  /**
+   * Re-seal under the configured key the `integrity` values sealed under one
+   * of `previous`. A value that does not open under its previous key does not
+   * stop the run: it is logged (ids only), left as is and listed in
+   * `unreadable`, so the rest is re-keyed (the guard then names the remedy).
+   */
+  async rekeyIntegrityRows (previous: TokenProtection[]): Promise<TokenPassResult & { unreadable: Array<{ userId: string; id: string }> }> {
+    const unreadable: Array<{ userId: string; id: string }> = [];
+    const res = await this._eachIntegrityRow(SEALED_INTEGRITY_WHERE, async (row) => {
       const stored = row.integrity as string;
       if (this.tokenProtection.ownsSealed(stored)) return 0;
       const from = previous.find((p) => p.ownsSealed(stored));
       if (from == null) return 0;
-      const clear = from.openAccessIntegrity(row.user_id as string, stored);
+      let clear: string;
+      try {
+        clear = from.openAccessIntegrity(row.user_id as string, stored);
+      } catch (err) {
+        logger.error('access integrity at rest: rekey: access ' + JSON.stringify(row.id) + ' of user ' + JSON.stringify(row.user_id) +
+          ': integrity does not open under its previous key, left as is (' + (err as Error).message + ')');
+        unreadable.push({ userId: row.user_id as string, id: row.id as string });
+        return 0;
+      }
       const upd = await this.db.query('UPDATE accesses SET integrity = $1 WHERE user_id = $2 AND id = $3 AND integrity = $4',
         [this.tokenProtection.sealAccessIntegrity(row.user_id as string, clear), row.user_id, row.id, stored]);
       return upd.rowCount;
     });
+    return Object.assign(res, { unreadable });
   }
 
   // ---- Tokens of deleted accesses ----
@@ -929,17 +956,27 @@ class AccessesPG extends BaseStoragePG<AccessItem> {
    * row with its token is re-hashed without it; any other value is kept as
    * stored, for the integrity check to report. One compare-and-set statement
    * per row, on its raw token columns and integrity. Idempotent.
+   *
+   * `deletedAt` (a deletion, with `userId`): only the history rows of the
+   * heads that deletion marked (`deleted = deletedAt`; the heads themselves
+   * lost their token in its update), read through `idx_access_head_id`, not
+   * every history row of the account.
    */
-  async dropTokensOfDeletedRowsOn (queryable: PgDbLike, userId: string | null): Promise<number> {
+  async dropTokensOfDeletedRowsOn (queryable: PgDbLike, userId: string | null, deletedAt?: number): Promise<number> {
     const holdsToken = '(a.token IS NOT NULL OR a.token_hash IS NOT NULL OR a.token_enc IS NOT NULL)';
-    const deletedOrOfDeleted = '(a.deleted IS NOT NULL OR (a.head_id IS NOT NULL AND EXISTS (SELECT 1 FROM accesses d ' +
-      'WHERE d.user_id = a.user_id AND d.id = a.head_id AND d.deleted IS NOT NULL)))';
     let count = 0;
     let after: [string, string] | null = null;
     for (;;) {
       const params: unknown[] = [];
-      let sql = 'SELECT a.* FROM accesses a WHERE ' + holdsToken + ' AND ' + deletedOrOfDeleted;
+      let sql = 'SELECT a.* FROM accesses a WHERE ' + holdsToken;
       if (userId != null) { params.push(userId); sql += ' AND a.user_id = $' + params.length; }
+      if (userId != null && deletedAt != null) {
+        params.push(deletedAt);
+        sql += ' AND a.head_id IN (SELECT d.id FROM accesses d WHERE d.user_id = $1 AND d.deleted = $' + params.length + ' AND d.head_id IS NULL)';
+      } else {
+        sql += ' AND (a.deleted IS NOT NULL OR (a.head_id IS NOT NULL AND EXISTS (SELECT 1 FROM accesses d ' +
+          'WHERE d.user_id = a.user_id AND d.id = a.head_id AND d.deleted IS NOT NULL)))';
+      }
       if (after != null) { params.push(after[0], after[1]); sql += ' AND (a.user_id, a.id) > ($' + (params.length - 1) + ', $' + params.length + ')'; }
       params.push(RECOMPUTE_BATCH_SIZE);
       sql += ' ORDER BY a.user_id, a.id LIMIT $' + params.length;

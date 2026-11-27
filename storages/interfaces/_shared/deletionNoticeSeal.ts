@@ -25,9 +25,13 @@ export function noticeContext (id: string): string {
   return 'deletion-notice:' + id;
 }
 
-/** The value to store for a row's endpoint. */
+/**
+ * The value to store for a row's endpoint (a row from above the engine: its
+ * endpoint is always the clear one, so a `sealed:`-looking value is sealed
+ * too and reads back as itself).
+ */
 export function storedEndpoint (tp: TokenProtection, id: string, status: Status, apiEndpoint: string): string {
-  if (status !== 'pending' || typeof apiEndpoint !== 'string' || isSealedValue(apiEndpoint) || apiEndpoint === '') return apiEndpoint;
+  if (status !== 'pending' || typeof apiEndpoint !== 'string' || apiEndpoint === '') return apiEndpoint;
   return tp.sealSecret(noticeContext(id), apiEndpoint);
 }
 
@@ -60,10 +64,22 @@ export function sealedNoticeStatus (tp: TokenProtection, rows: Array<{ status: s
   return status;
 }
 
-/** The row with its endpoint re-sealed under `tp` from one of `previous`; null when no key of them owns it. */
-export function rekeyedEndpoint (tp: TokenProtection, previous: TokenProtection[], id: string, stored: string): string | null {
+/**
+ * The row with its endpoint re-sealed under `tp` from one of `previous`; null
+ * when no key of them owns it, or when it does not open under that key
+ * (logged, notice id only: the outbox retires it unsent).
+ */
+export function rekeyedEndpoint (tp: TokenProtection, previous: TokenProtection[], id: string, stored: string, log?: (msg: string) => void): string | null {
   if (!isSealedValue(stored) || tp.ownsSealed(stored)) return null;
   const from = previous.find((p) => p.ownsSealed(stored));
   if (from == null) return null;
-  return tp.sealSecret(noticeContext(id), from.openSecret(noticeContext(id), stored));
+  let clear: string;
+  try {
+    clear = from.openSecret(noticeContext(id), stored);
+  } catch (err) {
+    log?.('deletion notice ' + JSON.stringify(id) + ': stored endpoint does not open under its previous key, left as is (' +
+      (err as Error).message + ')');
+    return null;
+  }
+  return tp.sealSecret(noticeContext(id), clear);
 }

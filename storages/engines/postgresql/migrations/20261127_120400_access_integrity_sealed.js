@@ -17,7 +17,9 @@
  * the rows whose integrity is still in clear (empty in steady state) and the
  * key id of the sealed values (`sealed:` plus 8 characters of key id and the
  * dot: 16 characters). The expressions must stay the ones the probes of
- * `AccessesPG` use. Then the conversion pass, which the start runs too.
+ * `AccessesPG` use. A third finds the history rows of a deleted access (the
+ * token drop of each deletion). Then the conversion pass, which the start
+ * runs too.
  *
  * Idempotent.
  */
@@ -28,6 +30,8 @@ module.exports = {
         ON accesses(user_id) WHERE integrity IS NOT NULL AND integrity NOT LIKE 'sealed:%';
       CREATE INDEX IF NOT EXISTS idx_access_integrity_kid
         ON accesses ((left(integrity, 16))) WHERE integrity LIKE 'sealed:%';
+      CREATE INDEX IF NOT EXISTS idx_access_head_id
+        ON accesses(user_id, head_id) WHERE head_id IS NOT NULL;
     `);
     const { protectTokensAtRest } = require('../src/tokensAtRest.ts');
     const res = await protectTokensAtRest(context.db, { deletedTokens: true });

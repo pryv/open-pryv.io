@@ -15,6 +15,9 @@ import type { TokenProtection, ExportAccessesOptions } from '../../../../interfa
 import { itemsReportingUnreadable, isSealedValue, SEALED_PREFIX, refuseIntegrityValueCondition } from '../../../../interfaces/_shared/tokenProtection.ts';
 const require = createRequire(import.meta.url);
 
+/** Accesses whose unreadable integrity was logged by this process (once each, bounded). */
+const unreadableIntegrityLogged = new Set<string>();
+
 /** `data.integrity` stored in clear (a row not converted yet). */
 const CLEAR_INTEGRITY_SQL = '(json_extract(data, \'$.integrity\') IS NOT NULL AND substr(json_extract(data, \'$.integrity\'), 1, 7) <> \'sealed:\')';
 /** `data.integrity` stored sealed (under any key). */
@@ -126,11 +129,14 @@ class AccessesSQLite extends BaseStorageSQLite<AccessItem> {
   }
 
   /**
-   * The stored data with `token` replaced by its pair and a clear `integrity`
-   * sealed, in place (key order kept).
+   * The stored data with `token` replaced by its pair and `integrity` sealed,
+   * in place (key order kept). `fromItem`: the data is an item from above the
+   * engine, which never carries a stored form, so every `integrity` string is
+   * sealed (a `sealed:`-looking one reads back as the same public string);
+   * otherwise (stored data: conversion, re-key) a value already sealed is left.
    */
-  protectData (userId: string, data: Record<string, unknown>): Record<string, unknown> {
-    const sealIntegrity = AccessesSQLite.hasClearIntegrity(data);
+  protectData (userId: string, data: Record<string, unknown>, fromItem: boolean = false): Record<string, unknown> {
+    const sealIntegrity = fromItem ? typeof data.integrity === 'string' : AccessesSQLite.hasClearIntegrity(data);
     if (data.token == null && !sealIntegrity) return data;
     let tokenHash: string | null = null;
     let tokenEnc: string | null = null;
@@ -158,8 +164,13 @@ class AccessesSQLite extends BaseStorageSQLite<AccessItem> {
     try {
       return this.tokenProtection.openAccessIntegrity(requireUserId(userId), stored);
     } catch (err) {
-      logger.error('access ' + JSON.stringify(accessId) + ' of user ' + JSON.stringify(userId) +
-        ': stored integrity unreadable, returned without it (' + (err as Error).message + ')');
+      const key = JSON.stringify([userId, accessId]);
+      if (!unreadableIntegrityLogged.has(key)) {
+        if (unreadableIntegrityLogged.size >= 10000) unreadableIntegrityLogged.clear();
+        unreadableIntegrityLogged.add(key);
+        logger.error('access ' + JSON.stringify(accessId) + ' of user ' + JSON.stringify(userId) +
+          ': stored integrity unreadable, returned without it (' + (err as Error).message + ')');
+      }
       return undefined;
     }
   }
@@ -191,8 +202,8 @@ class AccessesSQLite extends BaseStorageSQLite<AccessItem> {
   }
 
   protected itemToRow (item: Partial<AccessItem>, userId?: string | null): { id: string, head_id: SqlParam, deleted: SqlParam, data: string } {
-    if (item.token == null && !AccessesSQLite.hasClearIntegrity(item as Record<string, unknown>)) return super.itemToRow(item, userId);
-    return super.itemToRow(this.protectData(requireUserId(userId), item as Record<string, unknown>), userId);
+    if (item.token == null && typeof item.integrity !== 'string') return super.itemToRow(item, userId);
+    return super.itemToRow(this.protectData(requireUserId(userId), item as Record<string, unknown>, true), userId);
   }
 
   /**
@@ -392,9 +403,18 @@ class AccessesSQLite extends BaseStorageSQLite<AccessItem> {
         if (isSealedValue(data.integrity) && !tp.ownsSealed(data.integrity)) {
           const stored = data.integrity;
           const from = previous.find((p) => p.ownsSealed(stored));
-          if (from == null) skipped = true;
+          let clear: string | null = null;
+          if (from != null) {
+            try {
+              clear = from.openAccessIntegrity(userId, stored);
+            } catch (err) {
+              logger.error('access tokens at rest: rekey: access ' + JSON.stringify(row.id) + ' of user ' + JSON.stringify(userId) +
+                ': integrity does not open under its previous key, left as is (' + (err as Error).message + ')');
+            }
+          }
+          if (clear == null) skipped = true;
           else {
-            data = Object.assign({}, data, { integrity: tp.sealAccessIntegrity(userId, from.openAccessIntegrity(userId, stored)) });
+            data = Object.assign({}, data, { integrity: tp.sealAccessIntegrity(userId, clear) });
             changed = true;
           }
         }
@@ -428,13 +448,22 @@ class AccessesSQLite extends BaseStorageSQLite<AccessItem> {
    * is active, a row whose stored integrity verifies on the row with its
    * token is re-hashed without it; any other value is kept as stored, for the
    * integrity check to report. Compare-and-set on the whole stored data.
+   *
+   * `deletedAt` (a deletion): only the history rows of the heads that
+   * deletion marked (`deleted = deletedAt`, read through the `deleted` and
+   * `head_id` indexes; the heads lost their token in its update), not every
+   * row of the database.
    */
-  _dropTokensOfDeletedRowsSync (udb: UserDbHandle): number {
+  _dropTokensOfDeletedRowsSync (udb: UserDbHandle, deletedAt?: number): number {
     const userId = requireUserId(udb.userId);
-    const rows = udb.db.prepare<DbRow>('SELECT a.* FROM accesses a WHERE (json_extract(a.data, \'$.token\') IS NOT NULL' +
-      ' OR json_extract(a.data, \'$.tokenHash\') IS NOT NULL OR json_extract(a.data, \'$.tokenEnc\') IS NOT NULL)' +
-      ' AND (a.deleted IS NOT NULL OR (a.head_id IS NOT NULL AND EXISTS (SELECT 1 FROM accesses d' +
-      ' WHERE d.id = a.head_id AND d.deleted IS NOT NULL)))').all();
+    const holdsToken = '(json_extract(a.data, \'$.token\') IS NOT NULL' +
+      ' OR json_extract(a.data, \'$.tokenHash\') IS NOT NULL OR json_extract(a.data, \'$.tokenEnc\') IS NOT NULL)';
+    const rows = deletedAt != null
+      ? udb.db.prepare<DbRow>('SELECT a.* FROM accesses a WHERE a.head_id IN (SELECT d.id FROM accesses d WHERE d.deleted = ?' +
+        ' AND d.head_id IS NULL) AND ' + holdsToken).all(deletedAt)
+      : udb.db.prepare<DbRow>('SELECT a.* FROM accesses a WHERE ' + holdsToken +
+        ' AND (a.deleted IS NOT NULL OR (a.head_id IS NOT NULL AND EXISTS (SELECT 1 FROM accesses d' +
+        ' WHERE d.id = a.head_id AND d.deleted IS NOT NULL)))').all();
     const upd = udb.db.prepare('UPDATE accesses SET data = ? WHERE id = ? AND data = ?');
     let count = 0;
     for (const row of rows) {
@@ -517,7 +546,7 @@ class AccessesSQLite extends BaseStorageSQLite<AccessItem> {
     if (!this.integrityAccesses.isActive) {
       this._userDbAndWrite(userOrUserId, callback, (udb) => udb.db.transaction(() => {
         const res = this._updateManySync(udb, query, updateData);
-        this._dropTokensOfDeletedRowsSync(udb);
+        this._dropTokensOfDeletedRowsSync(udb, now);
         return res;
       }).immediate());
       return;
@@ -544,7 +573,7 @@ class AccessesSQLite extends BaseStorageSQLite<AccessItem> {
     this._userDbAndWrite(userOrUserId, callback, (udb) => udb.db.transaction(() => {
       const res = this._updateManySync(udb, query, updateData);
       const res2 = this._findAndUpdateIfNeededSync(udb, { integrityBatchCode }, {}, updateIfNeeded);
-      this._dropTokensOfDeletedRowsSync(udb);
+      this._dropTokensOfDeletedRowsSync(udb, now);
       return { modifiedCount: res.modifiedCount, integrityRecomputed: res2.count };
     }).immediate());
   }

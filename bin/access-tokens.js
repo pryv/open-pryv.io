@@ -45,6 +45,8 @@ Commands:
               is not set, of auth.adminAccessKey. The core refuses to start until
               this is done. The file holds the previous value of the setting that
               was in use (either form is recognised). Idempotent. Core stopped.
+              A pending deletion notice under a key not given (or not re-keyed)
+              is not refused at start: it is retired unsent.
   unprotect   Rollback aid, before starting an image that does not protect tokens
               at rest: writes the clear tokens, session ids, access integrity
               values and notice endpoints back and restores the clear-token index.
@@ -131,9 +133,18 @@ require('@pryv/boiler').init({
         console.log(`Re-keyed ${res.accesses} access row(s), ${res.sessions} session(s), ` +
           (res.integrity != null ? `${res.integrity} access integrity value(s) ` : '') +
           `and ${res.deletionNotices ?? 0} deletion notice(s).`);
+        const unreadable = Array.isArray(res.integrityUnreadable) ? res.integrityUnreadable : [];
+        if (unreadable.length > 0) {
+          // Damaged under their own previous key: re-keying cannot open them.
+          console.error('These access integrity values do not open under their previous key and were left as they are ' +
+            '(user id, access id):');
+          for (const r of unreadable) console.error(`  ${r.userId} ${r.id}`);
+          console.error('Remedy: set the integrity of each of these rows to NULL (core stopped), then start; ' +
+            '`node bin/integrity-check.js` then reports them as "missing integrity property".');
+        }
         if (res.remaining) {
-          console.error('Rows remain under a key other than the configured one (see `status`): ' +
-            'the given previous key is not theirs.');
+          console.error('Rows remain under a key other than the configured one (see `status`)' +
+            (unreadable.length > 0 ? ', the ones above included' : ': the given previous key is not theirs') + '.');
           process.exit(2);
         }
         break;

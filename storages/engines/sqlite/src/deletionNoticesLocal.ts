@@ -207,7 +207,7 @@ class DeletionNoticesLocalSQLite {
   async rekeyRows (previous: TokenProtection[]): Promise<number> {
     return await this._rewrite(
       "SELECT id, status, api_endpoint FROM cmc_deletion_notices WHERE substr(api_endpoint, 1, 7) = 'sealed:'",
-      (r) => rekeyedEndpoint(this.tokenProtection, previous, r.id, r.api_endpoint));
+      (r) => rekeyedEndpoint(this.tokenProtection, previous, r.id, r.api_endpoint, (m) => logger.error(m)));
   }
 
   async sealStatus (): Promise<NoticeSealStatus> {

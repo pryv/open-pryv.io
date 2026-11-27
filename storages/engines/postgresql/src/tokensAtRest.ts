@@ -109,9 +109,11 @@ async function probeTokensAtRest (db?: PgDbLike): Promise<ProbeResult> {
  * notices). The tokens of deleted accesses are dropped when `deletedTokens`
  * is set (the migration) or when access rows were converted (rows a previous
  * image wrote after a rollback, its deletions included): this image drops
- * them at deletion. A no-op probe in steady state.
+ * them at deletion. `tokensOnly` (the migration `20261127_120100`, which runs
+ * before `20261127_120400` creates the indexes of the rest): tokens and
+ * sessions only, the rest is left to `120400`. A no-op probe in steady state.
  */
-async function protectTokensAtRest (db?: PgDbLike, options: { deletedTokens?: boolean } = {}): Promise<ProtectResult> {
+async function protectTokensAtRest (db?: PgDbLike, options: { deletedTokens?: boolean; tokensOnly?: boolean } = {}): Promise<ProtectResult> {
   const d = dbOrDefault(db);
   const tp = currentProtection();
   await assertNoForeignKeyRows(d, tp);
@@ -129,6 +131,7 @@ async function protectTokensAtRest (db?: PgDbLike, options: { deletedTokens?: bo
     result.sessions = s.rows;
     result.sessionsExpired = s.expired;
   }
+  if (options.tokensOnly === true) return result;
   if (options.deletedTokens === true || result.accesses > 0) {
     result.deletedTokens = await (await accessesWithIntegrity(d, tp)).dropTokensOfDeletedRows();
   }
@@ -170,7 +173,14 @@ async function unprotectTokensAtRest (db?: PgDbLike): Promise<{ accesses: number
 }
 
 /** Re-key (core stopped) the rows protected under one of `previous`. */
-async function rekeyTokensAtRest (previous: TokenProtection[], db?: PgDbLike): Promise<{ accesses: number; sessions: number; integrity: number; deletionNotices: number; remaining: boolean }> {
+async function rekeyTokensAtRest (previous: TokenProtection[], db?: PgDbLike): Promise<{
+  accesses: number;
+  sessions: number;
+  integrity: number;
+  deletionNotices: number;
+  remaining: boolean;
+  integrityUnreadable: Array<{ userId: string; id: string }>;
+}> {
   const d = dbOrDefault(db);
   const tp = currentProtection();
   const { accesses, sessions, notices } = stores(d, tp);
@@ -179,7 +189,14 @@ async function rekeyTokensAtRest (previous: TokenProtection[], db?: PgDbLike): P
   const i = await accesses.rekeyIntegrityRows(previous);
   const n = await notices.rekeyRows(previous);
   const remaining = await accesses.hasForeignKeyRows() || await accesses.hasForeignKeyIntegrityRows() || await sessions.hasForeignKeyRows();
-  return { accesses: a.rows, sessions: s.rows, integrity: i.rows, deletionNotices: n, remaining };
+  return {
+    accesses: a.rows,
+    sessions: s.rows,
+    integrity: i.rows,
+    deletionNotices: n,
+    remaining,
+    integrityUnreadable: i.unreadable.slice(0, MAX_CLEAR_ROWS_LISTED)
+  };
 }
 
 export {

@@ -10,10 +10,15 @@
  * only (the hash covers the token: a copy of it next to the access would be
  * an offline oracle for a weak token). Records written before carry the hash
  * in `content.record.integrity`: this walk removes it from every user's audit
- * database once, a marker file in the users directory records that it
- * completed (a failed database is retried at the next start). Event records
- * are left alone. Audit records carry no integrity of their own, so the
- * content is edited in place.
+ * database, then vacuums the databases it changed (the old values would stay
+ * in free pages). A marker file in the users directory records that it
+ * completed (a failed database is retried at the next start); `force` walks
+ * again anyway (records a previous image wrote after a rollback). Event
+ * records are left alone. Audit records carry no integrity of their own, so
+ * the content is edited in place.
+ *
+ * Run by the storages barrel's start pass whenever the AUDIT engine is
+ * SQLite, whatever the base engine (`storages/index.ts` `getTokensAtRest`).
  */
 
 import fs from 'node:fs';
@@ -25,7 +30,7 @@ import { SqliteStorage } from './userSQLite/Storage.ts';
 
 const logger = _internals.lazyLogger('storage:audit-access-integrity');
 
-type UsersDirectory = { getBasePath: () => string; listUserIds: () => Promise<string[]> };
+type UsersDirectory = { init?: () => Promise<void>; getBasePath: () => string; listUserIds: () => Promise<string[]> };
 
 /** Written in the users base directory once every audit database was scrubbed. */
 const AUDIT_ACCESS_INTEGRITY_MARKER = 'audit-access-integrity-scrubbed.done';
@@ -43,6 +48,14 @@ async function scrubAuditFile (file: string): Promise<number> {
     if (db.prepare('SELECT 1 FROM sqlite_master WHERE type = \'table\' AND name = \'events\'').get() == null) return 0;
     let changes = 0;
     await execute(() => { changes = db.prepare(SCRUB_SQL).run().changes; });
+    if (changes > 0) {
+      try {
+        db.prepare('VACUUM').run();
+        db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').run();
+      } catch (err) {
+        logger.warn('audit records of access writes: VACUUM of ' + file + ' skipped: ' + (err as Error).message);
+      }
+    }
     return changes;
   } finally {
     db.close();
@@ -50,19 +63,21 @@ async function scrubAuditFile (file: string): Promise<number> {
 }
 
 /**
- * Run the walk unless its marker is there. Returns null when skipped (marker
- * present, or the users directory unknown in this process).
+ * Run the walk unless its marker is there (or with `force`). Returns null
+ * when skipped (marker present, or no users directory in this process).
  */
-async function scrubAccessAuditIntegrityOnce (): Promise<{ records: number; failedUsers: number } | null> {
-  const users = _internals.userLocalDirectory as UsersDirectory;
+async function scrubAccessAuditIntegrity (options: { force?: boolean } = {}): Promise<{ records: number; failedUsers: number } | null> {
+  const users = _internals.userLocalDirectory as UsersDirectory | undefined;
+  if (users == null) return null;
   let basePath: string;
   try {
+    await users.init?.(); // idempotent; not initialised in the supervisor process
     basePath = users.getBasePath();
   } catch (_e) {
     return null;
   }
   const marker = path.join(basePath, AUDIT_ACCESS_INTEGRITY_MARKER);
-  if (fs.existsSync(marker)) return null;
+  if (options.force !== true && fs.existsSync(marker)) return null;
   const audit = new SqliteStorage('audit'); // for the file path only, never initialised
   let records = 0;
   const failed: string[] = [];
@@ -83,4 +98,4 @@ async function scrubAccessAuditIntegrityOnce (): Promise<{ records: number; fail
   return { records, failedUsers: failed.length };
 }
 
-export { scrubAccessAuditIntegrityOnce, scrubAuditFile, AUDIT_ACCESS_INTEGRITY_MARKER };
+export { scrubAccessAuditIntegrity, scrubAuditFile, AUDIT_ACCESS_INTEGRITY_MARKER };

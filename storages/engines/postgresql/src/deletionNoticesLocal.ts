@@ -167,7 +167,7 @@ class DeletionNoticesLocalPG {
     const res = await this.db.query("SELECT id, api_endpoint FROM cmc_deletion_notices WHERE api_endpoint LIKE 'sealed:%'");
     let n = 0;
     for (const r of res.rows) {
-      const next = rekeyedEndpoint(this.tokenProtection, previous, r.id, r.api_endpoint);
+      const next = rekeyedEndpoint(this.tokenProtection, previous, r.id, r.api_endpoint, (m) => logger.error(m));
       if (next == null) continue;
       const upd = await this.db.query('UPDATE cmc_deletion_notices SET api_endpoint = $1 WHERE id = $2 AND api_endpoint = $3',
         [next, r.id, r.api_endpoint]);

@@ -340,6 +340,11 @@ function createAuditStorage () {
   return new SqliteStorage('audit');
 }
 
+/** The audit copies of the access hash removed (see `auditAccessIntegrityScrub.ts`); run when this engine holds the audit. */
+async function scrubAccessAuditIntegrity (options: { force?: boolean } = {}): Promise<unknown> {
+  return await require('./auditAccessIntegrityScrub.ts').scrubAccessAuditIntegrity(options);
+}
+
 // -- SeriesStorage (SQLite, per-user file) ------------------------------
 
 function createSeriesConnection (config: Record<string, unknown>): unknown {
@@ -351,4 +356,4 @@ function getTokensAtRest (): unknown {
   return require('./tokensAtRest.ts');
 }
 
-export { init, initStorageLayer, getTokensAtRest, getUserAccountStorage, getUsersLocalIndex, getExternalIdsLocal, getDeletionNoticesLocal, getErasuresLocal, getDataStoreModule, createAuditStorage, createSeriesConnection };
+export { init, initStorageLayer, getTokensAtRest, getUserAccountStorage, getUsersLocalIndex, getExternalIdsLocal, getDeletionNoticesLocal, getErasuresLocal, getDataStoreModule, createAuditStorage, scrubAccessAuditIntegrity, createSeriesConnection };

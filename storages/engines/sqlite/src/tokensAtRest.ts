@@ -15,6 +15,8 @@
  * idempotent.
  */
 
+import fs from 'node:fs';
+import path from 'node:path';
 import type { TokenProtection } from '../../../interfaces/_shared/tokenProtection.ts';
 import type { AccessesSQLite } from './user/AccessesSQLite.ts';
 import type { SessionsSQLite } from './SessionsSQLite.ts';
@@ -25,9 +27,14 @@ import {
   tokensUnprotected, writeUnprotectedMarker, removeUnprotectedMarker
 } from './user/AccessesSQLite.ts';
 import { DeletionNoticesLocalSQLite } from './deletionNoticesLocal.ts';
-import { scrubAccessAuditIntegrityOnce } from './auditAccessIntegrityScrub.ts';
 
 type IntegrityStatus = { clear: number; sealedCurrentKey: number; sealedOtherKeys: Record<string, number> };
+
+/** Whether the core's deletion-notice database exists (read-only callers do not create it). */
+function noticesFileExists (): boolean {
+  const base = (_internals.config as { path?: unknown } | undefined)?.path;
+  return typeof base === 'string' && fs.existsSync(path.join(base, 'cmc-deletion-notices.db'));
+}
 
 let noticesInstance: Promise<DeletionNoticesLocalSQLite> | null = null;
 
@@ -86,15 +93,15 @@ async function protectTokensAtRest (): Promise<Record<string, number>> {
   const a = await protectAccessTokensOnce(accesses);
   const s = sessions.hasClearRows() ? await sessions.protectClearRows() : { rows: 0, expired: 0 };
   const n = await (await notices(accesses.tokenProtection)).protectClearRows();
-  const audit = await scrubAccessAuditIntegrityOnce();
+  // The audit copies of the access hash are scrubbed by the barrel, for the
+  // AUDIT engine (`storages/index.ts` `getTokensAtRest`).
   return {
     accesses: a?.rows ?? 0,
     accessesFailedUsers: a?.failedUsers ?? 0,
     deletedTokens: a?.deletedTokens ?? 0,
     sessions: s.rows,
     sessionsExpired: s.expired,
-    deletionNotices: n,
-    auditRecords: audit?.records ?? 0
+    deletionNotices: n
   };
 }
 
@@ -132,7 +139,9 @@ async function tokensAtRestStatus (): Promise<Record<string, unknown>> {
     accessIntegrity: integrity,
     accessesFailedUsers: failed.length,
     sessions: sessions.tokenStatus(),
-    deletionNotices: await (await notices(accesses.tokenProtection)).sealStatus()
+    deletionNotices: noticesFileExists()
+      ? await (await notices(accesses.tokenProtection)).sealStatus()
+      : { clear: 0, sealedCurrentKey: 0, sealedOtherKeys: {} }
   };
 }
 
