@@ -330,7 +330,9 @@ function getAccessLogicForId (userId: string, accessId: string) {
   if (accessLogics == null) { return null; }
   return accessLogics.ids.get(accessId) ?? null;
 }
-function unsetAccessLogic (userId: string, accessLogic: { id: string; token: string }, notifyOtherProcesses = true) {
+/** `token` is optional: the invalidation message between processes carries the
+ *  access id only, the token is found in this process's own map. */
+function unsetAccessLogic (userId: string, accessLogic: { id: string; token?: string | null }, notifyOtherProcesses = true) {
   if (!isActive) { return; }
   // Bump BEFORE the `accessLogics == null` early return: the invalidation is
   // semantic and must fence an in-flight read even when nothing is cached here
@@ -341,7 +343,9 @@ function unsetAccessLogic (userId: string, accessLogic: { id: string; token: str
   // perform unset
   const accessLogics = getAccessLogicsOfUser(userId);
   if (accessLogics == null) { return; }
-  accessLogics.tokens.delete(accessLogic.token);
+  const cachedToken = accessLogics.ids.get(accessLogic.id)?.token;
+  if (cachedToken != null) accessLogics.tokens.delete(cachedToken);
+  if (accessLogic.token != null) accessLogics.tokens.delete(accessLogic.token);
   accessLogics.ids.delete(accessLogic.id);
 }
 function _clearAccessLogics (userId: string) {

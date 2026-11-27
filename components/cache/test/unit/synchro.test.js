@@ -84,6 +84,30 @@ describe('[SYNC] Synchro', function () {
     assert.ok(cache.getAccessLogicForId('toto', 'test') == null);
   });
 
+  it('[TKAP2] the invalidation message carries the access id, never the token; it still evicts on a sibling', async () => {
+    const sent = [];
+    const emit = pubsub.cache.emit;
+    pubsub.cache.emit = function (...args) { sent.push(args); };
+    try {
+      cache.setAccessLogic('toto', { id: 'tkap2', token: 'secret-tkap2-token' });
+      cache.unsetAccessLogic('toto', { id: 'tkap2', token: 'secret-tkap2-token' });
+    } finally {
+      pubsub.cache.emit = emit;
+    }
+    const msgs = sent.filter(([, m]) => m?.action === MESSAGES.UNSET_ACCESS_LOGIC);
+    assert.strictEqual(msgs.length, 1);
+    assert.strictEqual(msgs[0][1].accessId, 'tkap2');
+    assert.ok(!JSON.stringify(msgs[0]).includes('secret-tkap2-token'), 'no token in the message');
+    // a sibling receives the id-only message: both maps evicted
+    cache.setAccessLogic('toto', { id: 'tkap2b', token: 'secret-tkap2b' });
+    assert.ok(cache.getAccessLogicForToken('toto', 'secret-tkap2b'));
+    await setTimeout(50);
+    tcpPublish('cache.toto', 'toto', { action: MESSAGES.UNSET_ACCESS_LOGIC, accessId: 'tkap2b' });
+    await setTimeout(50);
+    assert.ok(cache.getAccessLogicForId('toto', 'tkap2b') == null);
+    assert.ok(cache.getAccessLogicForToken('toto', 'secret-tkap2b') == null);
+  });
+
   it('[8M1B] Registered listener should be kept on a data bust (stream write)', async () => {
     cache.setStreams('toto-id', 'local', 'titi');
     assert.strictEqual(cache.getStreams('toto-id', 'local'), 'titi');

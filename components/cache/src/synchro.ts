@@ -11,7 +11,7 @@ import { LRUCache } from 'lru-cache';
 const logger = getLogger('cache:synchro');
 
 interface CacheModule {
-  unsetAccessLogic: (userId: string, ref: { id: string; token: string }, propagate: boolean) => void;
+  unsetAccessLogic: (userId: string, ref: { id: string; token?: string | null }, propagate: boolean) => void;
   unsetUserData: (userId: string, propagate: boolean) => void;
   unsetUser: (username: string, propagate: boolean) => void;
   unsetUserById: (userId: string, propagate: boolean) => void;
@@ -83,7 +83,9 @@ function handleMessage (userId: string, msg: Message): void {
   // The token of an updated access is still valid: never in the log.
   logger.debug('handleMessage', userId, { action: msg.action, accessId: msg.accessId, username: msg.username, userId: msg.userId });
   if (msg.action === MESSAGES.UNSET_ACCESS_LOGIC) {
-    return cache!.unsetAccessLogic(userId, { id: msg.accessId!, token: msg.accessToken! }, false);
+    // Messages carry the access id only; a sibling of an earlier release may
+    // still send the token as well.
+    return cache!.unsetAccessLogic(userId, { id: msg.accessId!, token: msg.accessToken ?? null }, false);
   }
   if (msg.action === MESSAGES.UNSET_USER_DATA) {
     // streams and accesses
@@ -98,11 +100,12 @@ function handleUnsetUser (msg: Message): void {
   if (msg.userId != null) { cache!.unsetUserById(msg.userId, false); }
 }
 // ------- emitter
+// The access id only: a bearer token never travels on the broker (each
+// receiver resolves the token to evict from its own cache).
 function unsetAccessLogic (userId: string, accessLogic: AccessLogicRef): void {
   pubsub.cache.emit(userId, {
     action: MESSAGES.UNSET_ACCESS_LOGIC,
-    accessId: accessLogic.id,
-    accessToken: accessLogic.token
+    accessId: accessLogic.id
   });
 }
 function unsetUserData (userId: string): void {
