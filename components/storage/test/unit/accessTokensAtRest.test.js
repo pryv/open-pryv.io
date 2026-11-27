@@ -943,6 +943,25 @@ describe('[TKAR] access tokens and session ids at rest', function () {
         fs.rmSync(dir, { recursive: true, force: true });
       }
     });
+
+    it('[TKIA4] PostgreSQL: once its index exists, the scrub runs while another session holds a concurrent index build\'s lock on audit_events', async function () {
+      if (engine !== 'postgresql') return this.skip();
+      const { scrubAuditEventsTable } = require('storages/engines/postgresql/src/auditAccessIntegrityScrub.ts');
+      await scrubAuditEventsTable(storages.databasePG);
+      const holder = await storages.databasePG.connectDedicated('tkia4 holder');
+      const runner = await storages.databasePG.connectDedicated('tkia4 runner');
+      try {
+        await holder.query('BEGIN');
+        // The lock a CREATE INDEX CONCURRENTLY of audit_events holds for its whole build.
+        await holder.query('LOCK TABLE audit_events IN SHARE UPDATE EXCLUSIVE MODE');
+        await runner.query('SET lock_timeout = \'2s\'');
+        assert.strictEqual(typeof await scrubAuditEventsTable(runner), 'number');
+      } finally {
+        await holder.query('ROLLBACK').catch(() => {});
+        await holder.end();
+        await runner.end();
+      }
+    });
   });
 
   describe('[TKSS] sessions', () => {

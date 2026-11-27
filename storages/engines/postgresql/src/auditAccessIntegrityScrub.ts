@@ -33,7 +33,11 @@ const TO_SCRUB_WHERE = 'content #> \'{record,integrity}\' IS NOT NULL AND conten
 
 /** Remove the hash from the access-write records of `audit_events`; returns the records changed. */
 async function scrubAuditEventsTable (db: PgQueryable): Promise<number> {
-  await db.query('CREATE INDEX IF NOT EXISTS idx_audit_access_integrity ON audit_events(user_id) WHERE ' + TO_SCRUB_WHERE);
+  // Only when the index is missing: `CREATE INDEX IF NOT EXISTS` takes the SHARE lock on the table before it looks at
+  // the name, which queues every audit write behind a concurrent index build of `audit_events` and makes that build
+  // fail as a deadlock. The start pass runs this at every start.
+  await db.query('DO $$ BEGIN IF to_regclass(\'idx_audit_access_integrity\') IS NULL THEN ' +
+    'CREATE INDEX IF NOT EXISTS idx_audit_access_integrity ON audit_events(user_id) WHERE ' + TO_SCRUB_WHERE + '; END IF; END $$;');
   const res = await db.query('UPDATE audit_events SET content = content #- \'{record,integrity}\' WHERE ' + TO_SCRUB_WHERE);
   const n = res.rowCount ?? 0;
   if (n > 0) logger.info('audit records of access writes: the integrity copy removed from ' + n + ' records');

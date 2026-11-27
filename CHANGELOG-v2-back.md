@@ -41,7 +41,9 @@
   each one changed, marker `audit-access-integrity-scrubbed.done` (`force` walks again). PostgreSQL
   (`postgresql/src/auditAccessIntegrityScrub.ts`, also migration `20261127_120500`): `content #- '{record,integrity}'`
   where `content.record.key` starts with `ACCESS:`, through the partial index `idx_audit_access_integrity`
-  (created on first use, empty afterwards), at every start, so a core whose audit alone is on PostgreSQL (its
+  (created on first use only when `to_regclass` finds none: `CREATE INDEX IF NOT EXISTS` would take the table's
+  SHARE lock at every start and break a concurrent index build of `audit_events`; empty afterwards), at every
+  start, so a core whose audit alone is on PostgreSQL (its
   migrations do not run there) is covered too. Audit records carry no integrity of their own (`Audit.ts` never sets
   it), so the content is edited in place. `breachScopeReport` renders an access write as `(key only)`.
 - Deletion notices (`deletionNoticesLocal.ts`, both engines, helpers in `interfaces/_shared/deletionNoticeSeal.ts`):
@@ -64,7 +66,8 @@
   `unprotect` / `rekey` report the integrity values and notices they rewrote; `rekey` lists the integrity values
   that did not open (user id, access id) with the remedy.
 - Tests: `[TKPA6]`, `[TKBT4]` (business unit); `[TKIN0]`-`[TKIN9]`, `[TKIM1]`, `[TKIR1]`, `[TKUP1]`,
-  `[TKDL1]`-`[TKDL5]`, `[TKDN1]`-`[TKDN3]`, `[TKDN5]`, `[TKIA2]`, `[TKIA3]`
+  `[TKDL1]`-`[TKDL5]`, `[TKDN1]`-`[TKDN3]`, `[TKDN5]`, `[TKIA2]`, `[TKIA3]`, `[TKIA4]` (the
+  scrub runs while another session holds `SHARE UPDATE EXCLUSIVE` on `audit_events`; fails with the guard removed)
   (`components/storage/test/unit/accessTokensAtRest.test.js`; `[TKST6]`, `[TKMG1]`, `[TKPR2]` adjusted);
   `[TKDN4]` (`components/cmc/test/deletionOutbox.test.js`); `[TKIA1]` (`components/audit/test/acceptance/integrity.test.js`,
   replaces the check that the record carried the hash).
