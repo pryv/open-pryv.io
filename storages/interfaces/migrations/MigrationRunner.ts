@@ -46,7 +46,8 @@ export interface MigrationCapableEngine {
    * Run `fn` holding a lock shared by every process on the same database, so
    * two runners at once (a booting core and `bin/migrate.js up`, two cores)
    * never apply a migration twice. Optional: an engine without it runs
-   * unlocked.
+   * unlocked, with a warning when it applies a migration. Not re-entrant: a
+   * migration never calls the runner.
    */
   withLock?<T> (fn: () => Promise<T>): Promise<T>;
 }
@@ -115,11 +116,15 @@ class MigrationRunner {
     return applied;
   }
 
-  /** Apply (or, dry, list) one engine's pending migrations into `applied`. */
+  /**
+   * Apply (or, dry, list) one engine's pending migrations into `applied`.
+   * @private
+   */
   async _runEngine (engine: MigrationCapableEngine, applied: AppliedMigration[], targetVersion: number | undefined, dryRun: boolean): Promise<void> {
     const discovered = discoverMigrations(engine.migrationsDir);
     let current = await engine.getVersion();
     const cap = targetVersion ?? Number.POSITIVE_INFINITY;
+    let saidUnlocked = false;
 
     for (const migration of discovered) {
       if (migration.targetVersion <= current) continue;
@@ -138,6 +143,11 @@ class MigrationRunner {
         continue;
       }
 
+      if (engine.withLock == null && !saidUnlocked) {
+        this.logger.warn(`[migrations] ${engine.id}: no cross-process lock for this engine; ` +
+          `two processes starting together may both apply ${migration.filename}`);
+        saidUnlocked = true;
+      }
       this.logger.info(`[migrations] ${engine.id}: applying ${migration.filename} (→ v${migration.targetVersion})`);
       const ctx = engine.buildContext();
       const t0 = Date.now();

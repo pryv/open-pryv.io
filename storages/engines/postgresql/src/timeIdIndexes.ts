@@ -28,11 +28,14 @@
  * time index for the length of a build.
  */
 
+import { acquireAdvisoryLock, releaseAdvisoryLock } from './advisoryLock.ts';
+
 type IndexQueryResult = { rows: Array<Record<string, unknown>> };
 type IndexQueryFn = (sql: string, params?: unknown[]) => Promise<IndexQueryResult>;
-interface IndexDbClient { query: IndexQueryFn; release: (err?: Error) => void }
-/** The part of DatabasePG used here: one dedicated client from its pool. */
-interface IndexDb { getClient: () => Promise<IndexDbClient> }
+interface IndexDbClient { query: IndexQueryFn }
+interface IndexDedicatedClient extends IndexDbClient { end: () => Promise<void> }
+/** The part of DatabasePG used here: a connection outside its pools. */
+interface IndexDb { connectDedicated: (applicationName: string) => Promise<IndexDedicatedClient> }
 interface IndexLogLike { info?: (msg: string) => void; warn?: (msg: string) => void }
 
 // Advisory-lock key of this migration ('prti' in hex). Distinct from the
@@ -85,61 +88,39 @@ function escapeRegExp (s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-const LOCK_POLL_MS = 500;
-
-/**
- * Take this migration's advisory lock, saying so when another session holds
- * it. Polled, never waited on with `pg_advisory_lock`: a statement waiting
- * for the lock holds a snapshot, which the holder's concurrent build waits
- * for in turn (a deadlock PostgreSQL then breaks by failing one of them).
- */
-async function acquireLock (client: IndexDbClient, log: IndexLogLike): Promise<void> {
-  let said = false;
-  for (;;) {
-    const res = await client.query('SELECT pg_try_advisory_lock($1) AS locked', [TIME_ID_INDEXES_LOCK_KEY]);
-    if (res.rows[0]?.locked === true) return;
-    if (!said) {
-      log.info?.('time sort indexes: another process is building them; waiting for it');
-      said = true;
-    }
-    await new Promise((resolve) => setTimeout(resolve, LOCK_POLL_MS));
-  }
-}
+const LOCK_LABEL = 'time sort indexes';
 
 /**
  * Build the `(user_id, time, id)` indexes that are missing, invalid or
  * defined otherwise, then drop the `(user_id, time)` ones they replace.
- * Statements run one by one on a dedicated client outside any transaction
- * (CONCURRENTLY requires it), with no statement or lock time limit (a server
- * default would cancel the build at every start). A table that does not exist
+ * Statements run one by one on a connection of its own outside the pools (a
+ * small pool `max` cannot starve it), outside any transaction (CONCURRENTLY
+ * requires it), with no statement or lock time limit (a server default would
+ * cancel the build at every start); the connection is ended afterwards, which
+ * releases the lock and the settings whatever happened. The lock is polled
+ * (see `advisoryLock.ts`), with no maximum wait. A table that does not exist
  * is skipped.
  */
 async function ensureTimeIdIndexes (db: IndexDb, { logger }: { logger?: IndexLogLike } = {}): Promise<TimeIdIndexResult[]> {
   const log: IndexLogLike = logger ?? {};
-  const client = await db.getClient();
-  let broken = false;
+  const client = await db.connectDedicated('open-pryv.io time sort indexes');
   try {
     await client.query('SET statement_timeout = 0');
     await client.query('SET lock_timeout = 0');
-    await acquireLock(client, log);
+    await acquireAdvisoryLock(client, TIME_ID_INDEXES_LOCK_KEY, log, { label: LOCK_LABEL, holderDoing: 'building them' });
+    let failed = false;
     try {
       return await ensureLocked(client, log);
+    } catch (err) {
+      failed = true;
+      throw err;
     } finally {
-      // A client whose cleanup fails is discarded: its connection closes,
-      // which releases the lock and the settings anyway.
-      try {
-        await client.query('SELECT pg_advisory_unlock($1)', [TIME_ID_INDEXES_LOCK_KEY]);
-        await client.query('RESET statement_timeout');
-        await client.query('RESET lock_timeout');
-      } catch (cleanupErr) {
-        broken = true;
-      }
+      // After a failed statement the connection may be gone: the failure is
+      // the news then, and ending the connection releases the lock.
+      if (!failed) await releaseAdvisoryLock(client, TIME_ID_INDEXES_LOCK_KEY, log, LOCK_LABEL);
     }
-  } catch (err) {
-    broken = true;
-    throw err;
   } finally {
-    client.release(broken ? new Error('time sort index build failed; discarding client') : undefined);
+    await client.end().catch(() => {});
   }
 }
 

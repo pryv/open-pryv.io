@@ -29,7 +29,10 @@
   drops `idx_event_time` and `idx_audit_time`. A by-hand build that fails leaves an invalid index: drop it
   (`DROP INDEX CONCURRENTLY idx_event_time_id;`) before building again (the migration would also drop and rebuild
   it). Do not run `node bin/migrate.js up` from the new image against a database the previous release still
-  serves: it runs every pending migration of this release, not only this one.
+  serves: it runs every pending migration of this release, not only this one. Do not start or restart a process
+  of the previous release during that by-hand build: its start asks for a lock on the table that holds writes back
+  until the build ends, and can make PostgreSQL abort the build (`deadlock detected`, an invalid index left). From this release on, a
+  process starting during a build no longer does.
 - **If the build fails** (disk full, a server-side limit), the core does not start; it says why. The build itself
   runs with no statement or lock time limit, so a `statement_timeout` set on the role or the database does not
   cancel it. The invalid index left keeps its disk until the next start drops it.
@@ -48,6 +51,21 @@
   indexes in any setup.
 - Events sharing a time come back by id on PostgreSQL and in creation order on SQLite: each engine keeps one
   order, the two orders differ.
+
+### Operators (PostgreSQL): migrations run one at a time, and say who they wait for
+
+- Two processes applying migrations on one database (a starting core and `node bin/migrate.js up`, two cores) are
+  serialized: the second waits for the first, then applies only what is left. The waiting process logs who holds the
+  lock, e.g. `[migrations] postgresql: another process is applying migrations; waiting for it (lock held by pid 4242
+  from 10.0.0.5 (open-pryv.io migrations))`, repeats it every minute with the time waited, and logs
+  `lock obtained after ...`. There is no time limit on that wait: a core does not start with pending migrations. A
+  holder that is alive but stuck can be found with that pid in `pg_stat_activity`. The time sort index build logs the
+  same way (`time sort indexes: ...`).
+- The lock uses one connection of its own per process during the run, outside `storages.engines.postgresql.max`
+  (application names `open-pryv.io migrations` and `open-pryv.io time sort indexes`).
+- A warning `... another process may have run at the same time` means the lock did not hold for the whole run (its
+  connection was lost, or a transaction-mode connection pooler sits between the core and PostgreSQL: migrations need
+  a direct or session-mode connection). Check the logs of the other process.
 
 ### Access tokens and session ids no longer stored in clear (operator notice)
 
