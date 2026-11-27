@@ -1,5 +1,5 @@
 {
-  "version": "1.3.4",
+  "version": "1.4.0",
   "types": {
     "absorbed-dose/gy": {
       "description": "Gray",
@@ -3077,10 +3077,11 @@
                   "absent",
                   "residual"
                 ],
-                "description": "`deleted`: removed now. `absent`: already gone or expired. `residual`: still present (patient's core unreachable or refusing); retried, and bounded by the child's own expiry."
+                "description": "`deleted`: removed now. `absent`: confirmed gone by the patient's core, or expired. `residual`: not confirmed gone (the patient's core unreachable or refusing, or the access made through another grant); retried, and bounded by the child's own expiry."
               },
               "reason": {
-                "type": "string"
+                "type": "string",
+                "description": "Why a `residual` or `absent` result was reached, e.g. `peer-rejected`, `grant-gone`, `grant-replaced`, `grant-unknown`."
               }
             },
             "required": [
@@ -3135,6 +3136,566 @@
         "membershipAccessId",
         "reason",
         "records"
+      ]
+    },
+    "audit-log/oauth": {
+      "description": "An OAuth 2.0 event (consent, code, token or client metadata) concerning the account, written by the authorization server. Actions start with `oauth.`.",
+      "type": "object",
+      "properties": {
+        "source": {
+          "description": "The part of the server that wrote the record",
+          "type": "object",
+          "properties": {
+            "name": {
+              "description": "Its name",
+              "type": "string"
+            },
+            "clientId": {
+              "description": "The OAuth client the event is about",
+              "type": "string"
+            }
+          },
+          "required": [
+            "name",
+            "clientId"
+          ]
+        },
+        "action": {
+          "description": "The action id",
+          "type": "string"
+        },
+        "record": {
+          "description": "What the event is about. Which properties are present depends on the action; tokens are never recorded.",
+          "type": "object",
+          "properties": {
+            "clientId": {
+              "description": "The OAuth client the event is about",
+              "type": "string"
+            },
+            "userId": {
+              "description": "The id of the account, when the event has one",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "accessId": {
+              "description": "The access concerned (for example the session issued or revoked)",
+              "type": "string"
+            },
+            "dataGrantAccessId": {
+              "description": "The access holding the consent the session comes from",
+              "type": "string"
+            },
+            "requestedScope": {
+              "description": "The scope tokens requested",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "grantedScope": {
+              "description": "The scope tokens granted",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "grantedPermissions": {
+              "description": "The permissions granted at the consent"
+            },
+            "codeId": {
+              "description": "A hash naming the authorization code or refresh token presented",
+              "type": "string"
+            },
+            "oldTokenId": {
+              "description": "A hash naming the refresh token replaced",
+              "type": "string"
+            },
+            "newTokenId": {
+              "description": "A hash naming the new refresh token",
+              "type": "string"
+            },
+            "retiredAccessId": {
+              "description": "The session retired by a refresh",
+              "type": "string"
+            },
+            "dpopJkt": {
+              "description": "The thumbprint of the key the token is bound to",
+              "type": "string"
+            },
+            "reason": {
+              "description": "Why, for a refusal, a revocation or a detected reuse",
+              "type": "string"
+            },
+            "subjectChange": {
+              "description": "An acknowledged change of the account name given to the client",
+              "type": "object",
+              "properties": {
+                "from": {
+                  "type": "string"
+                },
+                "to": {
+                  "type": "string"
+                }
+              }
+            },
+            "subjectClientId": {
+              "description": "Token exchange: the client the exchanged token was issued to",
+              "type": "string"
+            },
+            "subjectAccessId": {
+              "description": "Token exchange: the session of the exchanged token",
+              "type": "string"
+            },
+            "reused": {
+              "description": "Token exchange: whether the session issued existed already",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "clientId"
+          ]
+        }
+      },
+      "required": [
+        "source",
+        "action",
+        "record"
+      ]
+    },
+    "audit-log/sso": {
+      "description": "A sign-in through an external identity provider: `sso.login` (signed in, or a second factor requested), `sso.failed` (the account was found but the sign-in could not be completed), `sso.refused`.",
+      "type": "object",
+      "properties": {
+        "source": {
+          "description": "The part of the server that wrote the record",
+          "type": "object",
+          "properties": {
+            "name": {
+              "description": "Its name",
+              "type": "string"
+            },
+            "provider": {
+              "description": "The identity provider, as named in the platform configuration",
+              "type": "string"
+            }
+          },
+          "required": [
+            "name",
+            "provider"
+          ]
+        },
+        "action": {
+          "description": "The action id",
+          "type": "string"
+        },
+        "record": {
+          "description": "The outcome; no identity data.",
+          "type": "object",
+          "properties": {
+            "userId": {
+              "description": "The id of the account, when one was found",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "provider": {
+              "description": "The identity provider, as named in the platform configuration",
+              "type": "string"
+            },
+            "code": {
+              "description": "The outcome code of a failed or refused sign-in",
+              "type": "string"
+            },
+            "mfa": {
+              "description": "For a sign-in: whether a second factor is still to be verified",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "provider"
+          ]
+        }
+      },
+      "required": [
+        "source",
+        "action",
+        "record"
+      ]
+    },
+    "audit-log/mfa": {
+      "description": "The second factor of the account was removed by a call made without an access of the account: `mfa.recovered` (with a recovery code) or `mfa.deactivatedByAdmin` (by an administrator of the platform).",
+      "type": "object",
+      "properties": {
+        "source": {
+          "description": "The part of the server that wrote the record",
+          "type": "object",
+          "properties": {
+            "name": {
+              "description": "Its name",
+              "type": "string"
+            }
+          },
+          "required": [
+            "name"
+          ]
+        },
+        "action": {
+          "description": "The action id",
+          "type": "string"
+        },
+        "record": {
+          "description": "The change; no personal data.",
+          "type": "object",
+          "properties": {
+            "method": {
+              "description": "The second factor removed, for example `totp` or `sms`",
+              "type": "string"
+            },
+            "enrolled": {
+              "description": "Removal by an administrator: whether a second factor was active",
+              "type": "boolean"
+            }
+          }
+        }
+      },
+      "required": [
+        "source",
+        "action",
+        "record"
+      ]
+    },
+    "audit-log/external-id": {
+      "description": "An external id linked to the account was released by an administrator of the platform (`account.externalIds.adminRelease`).",
+      "type": "object",
+      "properties": {
+        "source": {
+          "description": "The part of the server that wrote the record",
+          "type": "object",
+          "properties": {
+            "name": {
+              "description": "Its name",
+              "type": "string"
+            }
+          },
+          "required": [
+            "name"
+          ]
+        },
+        "action": {
+          "description": "The action id",
+          "type": "string"
+        },
+        "record": {
+          "description": "The release; never the external id itself.",
+          "type": "object",
+          "properties": {
+            "namespace": {
+              "description": "The namespace of the external id",
+              "type": "string"
+            },
+            "reason": {
+              "description": "The reason given by the administrator",
+              "type": "string"
+            }
+          },
+          "required": [
+            "namespace",
+            "reason"
+          ]
+        }
+      },
+      "required": [
+        "source",
+        "action",
+        "record"
+      ]
+    },
+    "audit-log/account-auto-deletion": {
+      "description": "A step of the automatic deletion of the account: `account.autoDeletion.erase` (the deletion is about to start; kept only where the audit log outlives the account) or `account.autoDeletion.resetByAdmin` (an administrator of the platform reset the schedule).",
+      "type": "object",
+      "properties": {
+        "source": {
+          "description": "The part of the server that wrote the record",
+          "type": "object",
+          "properties": {
+            "name": {
+              "description": "Its name",
+              "type": "string"
+            }
+          },
+          "required": [
+            "name"
+          ]
+        },
+        "action": {
+          "description": "The action id",
+          "type": "string"
+        },
+        "record": {
+          "description": "The step. Which properties are present depends on the action.",
+          "type": "object",
+          "properties": {
+            "username": {
+              "description": "Deletion, in records written by earlier servers only: the username of the account (no longer written: the record outlives the account)",
+              "type": "string"
+            },
+            "userId": {
+              "description": "Deletion: the id of the account",
+              "type": "string"
+            },
+            "trigger": {
+              "description": "Deletion: what decided it (`date` or `inactivity`)",
+              "type": "string"
+            },
+            "source": {
+              "description": "Deletion: who set the schedule (`user` or `operator`)",
+              "type": "string"
+            },
+            "deadline": {
+              "description": "Deletion: the deadline of the schedule, Unix timestamp (seconds)",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "deleteAt": {
+              "description": "Deletion: the date announced, Unix timestamp (seconds)",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "notices": {
+              "description": "Deletion: when the account holder was notified, Unix timestamps (seconds)",
+              "type": "array",
+              "items": {
+                "type": "number"
+              }
+            },
+            "reason": {
+              "description": "Reset: the reason given by the administrator",
+              "type": "string"
+            },
+            "removedSetting": {
+              "description": "Reset: whether the holder's own setting was removed",
+              "type": "boolean"
+            },
+            "was": {
+              "description": "Reset: the schedule before",
+              "type": "object",
+              "properties": {
+                "source": {
+                  "description": "Who set the schedule: `user`, `operator` or `none`",
+                  "type": "string"
+                },
+                "mode": {
+                  "description": "The schedule mode, for example `date`, `inactivity` or `never`",
+                  "type": "string"
+                },
+                "action": {
+                  "description": "What happens at the deadline: `delete`",
+                  "type": "string"
+                },
+                "deleteAt": {
+                  "description": "When the account is to be deleted, Unix timestamp (seconds)",
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "deadline": {
+                  "description": "The deadline of the schedule, Unix timestamp (seconds)",
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "remindersSent": {
+                  "description": "The number of reminders sent",
+                  "type": "number"
+                }
+              }
+            },
+            "now": {
+              "description": "Reset: the schedule after",
+              "type": "object",
+              "properties": {
+                "source": {
+                  "description": "Who set the schedule: `user`, `operator` or `none`",
+                  "type": "string"
+                },
+                "mode": {
+                  "description": "The schedule mode, for example `date`, `inactivity` or `never`",
+                  "type": "string"
+                },
+                "action": {
+                  "description": "What happens at the deadline: `delete`",
+                  "type": "string"
+                },
+                "deleteAt": {
+                  "description": "When the account is to be deleted, Unix timestamp (seconds)",
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "deadline": {
+                  "description": "The deadline of the schedule, Unix timestamp (seconds)",
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "required": [
+        "source",
+        "action",
+        "record"
+      ]
+    },
+    "audit-log/access": {
+      "description": "An app or shared access of the account was created, changed (permissions or expiry) or deleted by the server itself, not by an API call on that access: `accesses.created`, `accesses.changed` or `accesses.deleted`.",
+      "type": "object",
+      "properties": {
+        "source": {
+          "description": "The part of the server that wrote the record",
+          "type": "object",
+          "properties": {
+            "name": {
+              "description": "Its name",
+              "type": "string"
+            }
+          },
+          "required": [
+            "name"
+          ]
+        },
+        "action": {
+          "description": "The action id",
+          "type": "string"
+        },
+        "record": {
+          "description": "The access written and why. Ids only: no token, name, address or counterparty.",
+          "type": "object",
+          "properties": {
+            "accessId": {
+              "description": "The access written",
+              "type": "string"
+            },
+            "accessType": {
+              "description": "Its type, `app` or `shared`",
+              "type": "string"
+            },
+            "kind": {
+              "description": "What the access is for, when the server set it, for example `counterparty`, `oauth-grant`, `oauth-session` or `oauth-session-child` (created by a session)",
+              "type": "string"
+            },
+            "cause": {
+              "description": "Why it was written, a code",
+              "type": "string"
+            },
+            "by": {
+              "description": "The access of this account that asked for it, when one did",
+              "type": "string"
+            },
+            "grantId": {
+              "description": "The access whose change caused it",
+              "type": "string"
+            },
+            "related": {
+              "description": "Deletion: the other accesses deleted with it",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "changed": {
+              "description": "Change: what changed",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "accessId",
+            "cause"
+          ]
+        }
+      },
+      "required": [
+        "source",
+        "action",
+        "record"
+      ]
+    },
+    "audit-log/account": {
+      "description": "A record the server writes about the account itself, in its own audit log. `account.created`: the account was created on this core, the first record of its audit log, written once the account exists (by a registration, by an administrator of the platform, or by a delegate); it is also the record of the account's first personal access, when one was made. `account.deleted`: the account is being erased (by its holder, an administrator, the automatic deletion, a replay of the erasure ledger, or the server rolling back a creation), written before any of its data goes and only where the audit log outlives the account. `account.restored`: the account was restored from a backup, written once the restore keeps it.",
+      "type": "object",
+      "properties": {
+        "source": {
+          "description": "Who or what did it",
+          "type": "object",
+          "properties": {
+            "name": {
+              "description": "Its name. Creation: `registration`, `system` (an administrator) or `delegation` (a delegate). Deletion: `holder`, `admin` (an administrator), `auto-deletion`, `ledger-replay`, `system` (the server) or `unknown`. Restore: `backup`",
+              "type": "string"
+            },
+            "ip": {
+              "description": "A registration, or a deletion by the holder, only: the IP address of the client, when known",
+              "type": "string"
+            }
+          },
+          "required": [
+            "name"
+          ]
+        },
+        "action": {
+          "description": "The action id",
+          "type": "string"
+        },
+        "record": {
+          "description": "What was done. Ids and fixed words only: no username, address, password, token, app id, invitation or free text.",
+          "type": "object",
+          "properties": {
+            "accessId": {
+              "description": "Creation: the personal access made with the account, when one was. Deletion by the holder: the personal access that asked",
+              "type": "string"
+            },
+            "accessType": {
+              "description": "Its type, `personal`",
+              "type": "string"
+            },
+            "trigger": {
+              "description": "Deletion: what decided it, the word the erasure ledger keeps (`holder`, `admin`, `date`, `inactivity`, `ledger-replay`, `unfinished-registration`, `system` or `unknown`)",
+              "type": "string"
+            },
+            "backupDate": {
+              "description": "Restore: the date (UTC, `YYYY-MM-DD`) of the backup's data of the account, when the backup says",
+              "type": "string"
+            },
+            "target": {
+              "description": "Restore: `new`, or `existing` when the restore replaced an account of the core",
+              "type": "string"
+            },
+            "afterErasure": {
+              "description": "Restore: `completed` when the account had been erased after the backup, `unfinished` when the restore withdrew an erasure that had stopped",
+              "type": "string"
+            }
+          }
+        }
+      },
+      "required": [
+        "source",
+        "action",
+        "record"
       ]
     }
   },
