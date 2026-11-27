@@ -17,6 +17,10 @@
   CMC plugin-internal subtree now answer `404 unknown-resource`, as `events.getOne` does (was `403` with
   `cmc-protected-event-write`). Events such an access can see (the CMC inbox, a group's member records) keep the
   `403 cmc-protected-event-write` refusal.
+- `events.update`, `events.delete` and `events.deleteAttachment` on an event of the account-delegation internal
+  subtree now answer `404 unknown-resource` to every access, personal included, as `events.getOne` does (was
+  `400 delegation-managed-resource`). An event on the namespace root, which those accesses can read, keeps
+  `delegation-managed-resource`.
 - `events.deleteAttachment` now applies the refusals of `events.delete`: an attachment of a CMC inbox, internal or
   member-record event cannot be removed by an app or shared access (`cmc-protected-event-write`), nor one of an
   emails container item (`emails-reserved-stream`, personal token included), an account event or an

@@ -667,3 +667,79 @@ describe('[SRCU] CMC protections on events.update and internal writes', function
     assert.strictEqual(other.status, 403, JSON.stringify(other.body));
   });
 });
+
+/**
+ * Account-delegation events: events.getOne answers 404 for an event of the
+ * internal subtree, to every access (personal included); the write methods
+ * by id answer the same. An event on the namespace root is visible and keeps
+ * the plugin's refusal (`delegation-managed-resource`).
+ */
+describe('[DLIW] writes on account-delegation internal events answer as getOne', function () {
+  this.timeout(60_000);
+
+  const delegation = require('delegation');
+  const ROOT = ':_delegation:';
+  const INTERNAL_ROOT = ':_delegation:_internal';
+  const MANAGED = 'delegation-managed-resource';
+  let fixtures, mall, username, userId, personal, appToken, internalEvent, rootEvent;
+
+  before(async function () {
+    await initTests();
+    await initCore();
+    fixtures = getNewFixture();
+    mall = await getMall();
+    username = 'dliw' + cuid().toLowerCase().slice(-10);
+    personal = cuid();
+    appToken = cuid();
+    const user = await fixtures.user(username);
+    await user.access({ token: personal, type: 'personal' });
+    await user.session(personal);
+    await user.access({ token: appToken, type: 'app', permissions: [{ streamId: '*', level: 'contribute' }] });
+    userId = await (await getUsersRepository()).getUserIdForUsername(username);
+    await delegation.store.ensureParents(mall, userId);
+    internalEvent = await mall.events.create(userId, { streamIds: [INTERNAL_ROOT], type: 'note/txt', content: 'internal' });
+    rootEvent = await mall.events.create(userId, { streamIds: [ROOT], type: 'note/txt', content: 'root' });
+  });
+
+  after(async function () {
+    if (fixtures != null) {
+      try { await fixtures.clean(); } catch (_e) { /* best-effort */ }
+    }
+  });
+
+  function eventPath (id) { return '/' + username + '/events/' + id; }
+  function calls (id, token) {
+    return [
+      coreRequest.get(eventPath(id)).set('Authorization', token),
+      coreRequest.put(eventPath(id)).set('Authorization', token).send({ content: 'changed' }),
+      coreRequest.delete(eventPath(id)).set('Authorization', token),
+      coreRequest.delete(eventPath(id) + '/' + cuid()).set('Authorization', token)
+    ];
+  }
+
+  it('[DLI1] an internal event: getOne, update, delete and deleteAttachment all answer 404, personal included', async function () {
+    for (const token of [personal, appToken]) {
+      for (const res of await Promise.all(calls(internalEvent.id, token))) {
+        assert.strictEqual(res.status, 404, JSON.stringify(res.body));
+        assert.strictEqual(res.body.error?.id, 'unknown-resource', JSON.stringify(res.body));
+      }
+    }
+    const stored = await mall.events.getOne(userId, internalEvent.id);
+    assert.strictEqual(stored.content, 'internal');
+    assert.ok(!stored.trashed, 'not trashed');
+  });
+
+  it('[DLI2] a namespace root event is visible and keeps the plugin\'s refusal on update, delete and deleteAttachment', async function () {
+    for (const token of [personal, appToken]) {
+      const [read, ...writes] = await Promise.all(calls(rootEvent.id, token));
+      assert.strictEqual(read.status, 200, JSON.stringify(read.body));
+      for (const res of writes) {
+        assert.strictEqual(res.status, 400, JSON.stringify(res.body));
+        assert.strictEqual(res.body.error?.data?.id, MANAGED, JSON.stringify(res.body));
+      }
+    }
+    const stored = await mall.events.getOne(userId, rootEvent.id);
+    assert.strictEqual(stored.content, 'root');
+    assert.ok(!stored.trashed, 'not trashed');
+  });
+});

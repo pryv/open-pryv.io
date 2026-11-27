@@ -12,19 +12,23 @@
   `errors.forbidden()` before the any-one-stream `contribute` rule, through one helper `refusalForWriteById`, which
   also answers `unknownResource` for a deletion record (`streamIds` not an array) instead of a `TypeError`, and,
   for a non-personal access, for an event under `:_cmc:_internal` (`cmc.isCmcInternalStreamId`), matching
-  `cmcEventGetOneInternalGuard`. `events.deleteAttachment` now chains `cmcEventDeleteGuard`,
+  `cmcEventGetOneInternalGuard`, and for every access under `:_delegation:_internal`
+  (`delegation.isDelegationInternalStreamId`, when `delegation:active`), matching
+  `delegationEventGetOneInternalGuard`; the delegation update / delete guards are unchanged and still refuse the rest
+  of the namespace. `events.deleteAttachment` now chains `cmcEventDeleteGuard`,
   `sharedSecretsUpdateGuard` (the shared-secrets delete guard is a discard transition, not a refusal),
   `emailsDeleteGuard`, `blockAccountEventDeletion` and `delegationEventsDeleteGuardHook`.
   `isOutsideForcedStreams` groups the event's streams by store and checks each store's forced list (was: the
-  store of `streamIds[0]` only). The emails and delegation-internal exclusions of `canReadEvent` are not applied
-  to writes: their dedicated write guards keep their own errors. HF series writes (`hfs-server`
+  store of `streamIds[0]` only). The emails exclusion of `canReadEvent` is not applied to writes: its dedicated
+  write guards keep their own errors. HF series writes (`hfs-server`
   `definePermissions`) and `streams.delete` are left as they were.
 - Tests in `components/api-server/test/events-single-read-exclusions.test.js`: `[WRHD]` with `[WRN1]` to `[WRN9]`
   (`none`) and `[WRC1]` to `[WRC9]` (`create-only`): getOne, empty and content update, delete, deleteAttachment,
   multipart file add, inherited grant, streamIds escape, batch; `[WRD1]` (deleted event); controls `[WRR1]`
   (second stream at `read`) and `[WRP1]` (personal); `[WRFD]` with `[WRF1]` to `[WRF5]` (forced streams, the
   access stored by the fixture); `[SRD7]` (emails item attachment), `[SRC7]` (inbox attachment), `[SRC8]`
-  (internal event 404, the inbox keeps its id). `components/business/test/unit/accesses-canReadEvent.test.js`
+  (internal event 404, the inbox keeps its id), `[DLI1]` / `[DLI2]` (`[DLIW]`, delegation internal 404, root keeps
+  `delegation-managed-resource`). `components/business/test/unit/accesses-canReadEvent.test.js`
   `[CRF1]` to `[CRF4]` (forced streams per store).
 
 ### Access tokens and session ids at rest: keyed hash plus encrypted copy
