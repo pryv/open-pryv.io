@@ -6,10 +6,14 @@
 
 - `getDeletionsStreamed` (events.get with `modifiedSince` + `includeDeletions`, read with `limit` / `skip`) ordered by
   `deleted` alone: records sharing a deletion time (a stream deleted with its events) could come back in another order
-  from one page to the next, so pages repeated or missed records. The order now ends with the id (PostgreSQL) / rowid
-  (SQLite), in the same direction. PostgreSQL keeps reading `idx_event_deleted` (an incremental sort orders each tie
-  group, measured below); SQLite's index on `deleted` holds the rowid after the key (no sort). Tests: api-server
-  `[EGLD1]` (both engines), `[EGLD2]` (the same without the deletion-time index, the planner sorts).
+  from one page to the next, so pages repeated or missed records. The order of a page (`limit` or `skip` given, which
+  includes the default limit of 20 when no time range is given) now ends with the id (PostgreSQL) / rowid (SQLite), in
+  the same direction. PostgreSQL keeps reading `idx_event_deleted`, with an incremental sort over each tie group of the
+  rows read (EXPLAIN ANALYZE on 200 000 deletion records of one user, 50 per deletion time: first page of 20 0.09 to
+  0.16 ms, skip 10 000 5.6 to 16.6 ms); a read without limit or skip keeps the index order alone (the sort cost 2.8
+  times the 200 000-row read). SQLite's index on `deleted` holds the rowid after the key: no sort, same plan and time
+  measured. Tests: api-server `[EGLD1]` (both engines), `[EGLD2]` (the same without the deletion-time index, the
+  planner sorts).
 
 ### Test tooling: a development core starts after `just clean-test-data`
 

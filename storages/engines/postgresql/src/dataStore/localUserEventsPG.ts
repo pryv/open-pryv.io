@@ -218,11 +218,17 @@ const userEvents = ds.createUserEvents({
     const params: unknown[] = [userId, query.deletedSince];
     let idx = 3;
     let sql = `SELECT * FROM events WHERE ${conditions.join(' AND ')}`;
-    // Ends with the id, so that records sharing a deletion time (a stream
-    // deleted with its events) come back in one order whatever the plan, and
-    // pages read with skip neither repeat nor miss one.
+    // A page ends the order with the id, so that records sharing a deletion
+    // time (a stream deleted with its events) come back in one order whatever
+    // the plan, and pages read with skip neither repeat nor miss one. The
+    // index on (user_id, deleted) still serves the read; an incremental sort
+    // orders each tie group within the rows read (measured on 200 000 records:
+    // +0.07 ms for the first page of 20, 5.6 to 16.6 ms at skip 10 000). A
+    // read without limit or skip is one whole result, any tie order will do,
+    // and keeps the plain index order (the sort would cost 2.8 times the read).
     const direction = options?.sortAscending ? 'ASC' : 'DESC';
-    sql += ` ORDER BY deleted ${direction}, id ${direction}`;
+    const paged = options?.limit != null || options?.skip != null;
+    sql += ` ORDER BY deleted ${direction}${paged ? `, id ${direction}` : ''}`;
     if (options?.limit != null) { sql += ` LIMIT $${idx}`; params.push(options.limit); idx++; }
     if (options?.skip != null) { sql += ` OFFSET $${idx}`; params.push(options.skip); }
     return readableStreamFromCursor(this.db, sql, params);
