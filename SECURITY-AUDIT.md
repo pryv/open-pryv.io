@@ -1,6 +1,6 @@
 # Security Audit Report: open-pryv.io
 
-**Report revision:** 27 (2026-11-26), covering releases 2.0.0-rc.40 to 2.0.0-rc.90.
+**Report revision:** 28 (2026-11-27), covering releases 2.0.0-rc.40 to 2.0.0-rc.91.
 **Refresh:** this report is revised with every release that carries a security fix, once that
 release is deployed on the platforms the maintainers operate (section 7 has the procedure and the
 revision table).
@@ -147,6 +147,7 @@ its applicability is stated with it.
 | 2.0.0-rc.88 | 2026-11-25 | runtime update, not an audit finding: Node.js 24.22.3 for the Node.js security release of 2026-11-10 (seven high-severity fixes, among them disclosure of process memory to an HTTP peer and an uncaught exception a remote client can trigger in a TLS server, so a core that terminates TLS itself, the default, was directly exposed), with Debian's fixed glibc in the image; the CI actions are pinned to commits; no finding (new: a consent offer can require a verified email address); operator action: pull the new image, or upgrade Node.js to 24.22.3 and run `npm rebuild` on a native install | yes (2026-11-25) |
 | 2.0.0-rc.89 | 2026-11-26 | none (not an audit release: the erasure ledger, a durable record of each erased account, and a restore that refuses an account erased after its backup was taken); operator action: set the same `accountErasure.ledger.retentionDays` on every core, at least as long as the longest backup retention; scripts that check the exit code of `bin/backup.js --restore` handle the new codes `3` and `4` (see `CHANGELOG-v2.md`), pull the new image, or `npm install` on a native install | yes (with rc.90) |
 | 2.0.0-rc.90 | 2026-11-26 | 1 High, lower-severity fixes (two rated Medium and not counted: a second consent accept on the same scope left the first working; platform writes lost during a leader change), completion steps of earlier findings, and most of the limits and token work planned in section 5 since the first revision (per-account, per-access and per-connection limits; cached routing lookups with a DNS response rate limit; a floor on chosen tokens; keyed store hashes; signed webhook calls; the authenticated at-rest envelope written; feature permission names a closed set); dependency update, not an audit finding: rqlite 10.7.5 (GHSA-f4f3-px5g-gm4x, GHSA-j62w-8865-2h7x, `x/net` 0.63.0); operator action: every core of a platform on 2.0.0-rc.86 or later before deploying this release on any of them, and every process of a core on this release together; deploy an auth page that takes 10-symbol registration codes first; a production core refuses the published development admin key and files-read secret (run `bin/check-config.js` before); upgrade the rqlite followers first and the leader last, native installs replace `bin-ext/rqlited`; audit filters that list methods one by one add the new record names; clients handle the new `429`, `400` and `503` answers (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-26) |
+| 2.0.0-rc.91 | 2026-11-27 | no new finding; new administration surface, reviewed before merge (platform setup with a one-time code, administrator sessions with step-up and roles on every `/system` route, an origin rule on `/system`, an opt-in break-glass scope for the admin key) and OAuth2 client validation levels; hardening: a fresh install keeps registration closed until its setup is finished, MFA confirmation and sign-in sessions are checked by kind, storage engines' interface versions are checked at boot; lower-severity fixes (the reference nginx sample's OAuth2 locations missed other spellings of the routes; the audit trail kept under `audit.onUserDelete: keep` records deletions and restores, keeps no username and is no longer removed by a restore; `bin/migrate-platform.js` copies every platform row; a mail switch that is not a boolean is refused); operator action: replace a `services.email.enabled` object with the flat `services.email.send...` switches before upgrading (the core refuses to start otherwise; `bin/check-config.js` reports it); an existing platform is recorded as set up at its first boot, with nothing to do; update a copy of `docs/nginx-ingress-sample.conf`; update or remove engine folders under `storages/engines/` that this release does not ship; audit filters that list methods one by one add `account.deleted` and `account.restored`; scripts that parse `bin/oauth-client.js list` handle two more columns (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-27) |
 
 Each release contains the previous ones: upgrading to the latest release applies every fix. The
 upgrade notes of each release still apply (read them in `CHANGELOG-v2.md` for every release you
@@ -232,8 +233,10 @@ Anonymous callers; personal accesses (a login session); MFA-pending sessions; ap
 accesses; delegated accesses acting for another account; consent and cross-account messaging
 accesses; capability URLs and bearer keys that are not accesses (access-request poll keys,
 attachment read tokens, shared-secret keys, e-mail and password-reset links); OAuth2 clients and
-tokens; the admin key holder; another core of the same platform; the master process and its
-workers; the operator's custom authentication step; and the caller id carried for attribution.
+tokens; the admin key holder; administrators holding an administrator session, and the holder of a
+platform's one-time setup code (since 2.0.0-rc.91); another core of the same platform; the master
+process and its workers; the operator's custom authentication step; and the caller id carried for
+attribution.
 
 ### 3.2 Network surfaces
 
@@ -241,7 +244,8 @@ workers; the operator's custom authentication step; and the caller id carried fo
 |---|---|
 | API server: REST routes per account (events, streams, accesses, account, profile, MFA, webhooks, shared secrets, delegations, consent), batch calls, socket.io | public, access token |
 | Registration and access requests (`/reg/*`, `/users`, `/access/*`) | public, partly unauthenticated |
-| Administration (`/system/*`, `/reg/admin/*`, `/reg/records`, account deletion with the admin key) | admin key |
+| Administration (`/system/*`, `/reg/admin/*`, `/reg/records`, account deletion with the admin key) | admin key; on `/system/*`, since 2.0.0-rc.91, also an administrator session holding the route's permission, and a call carrying a foreign `Origin` without the admin key is refused |
+| Platform setup (`/system/setup/*`, the built-in setup page `GET /system/setup/`, since 2.0.0-rc.91) | public; the setup steps need the one-time setup code while setup is pending, and the page answers `404` once setup is done |
 | OAuth2 authorization server and third-party sign-in callbacks | public |
 | HF series server (series reads and writes, batch) | public, access token |
 | Previews server and attachment downloads | public, access token or read token |
@@ -267,7 +271,9 @@ Server start and cluster join (`bin/master.js`, including `--bootstrap`), cluste
 (`bin/bootstrap.js`), backup and restore (`bin/backup.js`), install wizard and configuration
 helpers (`bin/init.js`, `bin/check-config.js`, `bin/config-to-env.js`), DNS records and mail
 templates (`bin/dns-records.js`, `bin/mail.js`), migrations, PII hashing migration and rotation,
-OAuth2 clients, observability, breach scope, integrity checks and index reconciliation. The
+OAuth2 clients, observability, breach scope, integrity checks and index reconciliation, and since
+2.0.0-rc.91 platform administration (`bin/admin.js`: setup code, claim codes, roles, administrator
+sessions, on the platform database directly). The
 configuration loader, the boot validation, and config-driven code loading were part of the review.
 The Docker image and its entrypoint (user, capabilities, owned directories) were reviewed as well.
 
@@ -318,7 +324,10 @@ These are the main checks that held, summarised:
   no proof can be presented.
 - **Wrong-core requests** answer `421` without forwarding, so no credential leaves the core.
 - **Administration plane:** one gate with a constant-time admin key check in front of every system
-  route; system methods are not reachable through batch calls or socket.io.
+  route; system methods are not reachable through batch calls or socket.io. Since 2.0.0-rc.91 the
+  same gate accepts an administrator session, checked against the account's role on every request,
+  and every `/system` route names the permission it needs (a route without one fails the test
+  suite).
 - **Registration e-mail challenge and e-mail verification:** hashed codes and tokens, attempt
   budgets, constant-time comparison, expiry, links built from configuration, never from the `Host`
   header.
@@ -2828,6 +2837,113 @@ erasure ledger) appear in the release table only.
   `access.openedOnlyByAuthPage` on only once the auth page sends `?authPage=1`; a client that only
   listens on a socket with a personal token makes a call from time to time.
 
+### Fixed in 2.0.0-rc.91 (deployed)
+
+2.0.0-rc.91 carries no new counted finding. It adds an administration surface (platform setup,
+administrator sessions and roles) and validation levels for OAuth2 clients, each reviewed
+independently before merge with no finding in what was released; it keeps registration closed on a
+fresh install until its setup is finished, checks MFA sessions by kind, and carries lower-severity
+fixes.
+
+#### Platform setup, administrator sessions and roles
+
+- **New surface** (section 3.2); not a counted finding.
+- **What changed:** a fresh platform waits for its first administrator. Its first core prints a
+  one-time setup code at boot (in a marked block of its output and in `setup-code.txt` next to the
+  configuration file, mode 0600); only the code's SHA-256 is stored, and past 10 tries in 15
+  minutes on a core redeeming answers `429`. The code is redeemed on the setup page built into
+  every core (`GET /system/setup/`: strict Content-Security-Policy, `cache-control: no-store`,
+  `404` once setup is done), which signs in or creates the first administrator. Administrators then
+  use administrator sessions (`Authorization: AdminSession <token>`), opened on the account's home
+  core from a personal token, with the second factor of the sign-in when MFA is on, accepted by
+  every core and checked against the account's role on every request; sensitive acts need a recent
+  second factor (step-up). Every `/system` route names the permission it needs and accepts an
+  administrator session holding it, beside the admin key. The `owner` role is given by a one-time
+  claim code to an account signed in with a personal token (an app or shared token opens nothing);
+  the last owner cannot be revoked, nor delete its account with its own token; deleting an account
+  deletes its role.
+- **Origin rule on `/system`:** a call carrying an `Origin` and not authenticated by the admin key
+  is accepted only from the core's own origin, the portal's or `portal.cors.allowedOrigins`, with
+  CORS for that origin only. Admin-key calls and calls without `Origin` are unchanged.
+- **Break-glass admin key (opt-in):** `auth.adminAccessKeyScope: break-glass` limits the admin key
+  to the `/system` routes that need it (calls between cores, setup code, claim codes, role listing
+  and revocation, status): any other `/system` path refuses it, and outside `/system` it no longer
+  deletes accounts nor reaches `/reg/records` and `/reg/admin/*`. The default, `full`, is unchanged.
+- **Registration on a fresh install (BREAKING for fresh installs only):** while setup is pending,
+  `POST /users` answers `403`, except for the first administrator's account created through the
+  setup session (`setup.registrationWhilePending: closed`, the default). Until this release a new
+  install accepted registrations from its first boot.
+- **Residual:** unless `break-glass` is set, the admin key keeps its full reach, and it remains the
+  credential of calls between cores (section 5).
+- **Operator action:** none for an existing platform: it is recorded as set up at its first boot on
+  this release (no code is printed, admin-key calls and registration are unchanged). A fresh install
+  provisioned by automation finishes setup with the admin key (`POST /system/setup/finish` or
+  `node bin/admin.js setup finish`), or sets `setup.registrationWhilePending: open`. Treat the boot
+  output and `setup-code.txt` as secret until setup is done. List a portal served from another
+  origin in `portal.cors.allowedOrigins`. Guide: `docs/setup-and-administrators.md`.
+
+#### MFA: confirmation and sign-in sessions checked by kind
+
+- **Hardening**; not a counted finding.
+- **What changed:** `mfa.confirm` accepts an enrolment session only and `mfa.verify` a sign-in
+  session only; a session without a kind is refused by both (`invalid-access-token`). Until now a
+  session without a kind passed both checks; none could exist, as the server tags every session
+  when it opens it and keeps it in memory only, and the check no longer depends on that.
+- **Operator action:** none; nothing a client holds changes.
+
+#### OAuth2 client registration modes and validation levels
+
+- **New surface**; not a counted finding.
+- **What changed:** `oauth.clientRegistration.mode` accepts `curated` (the default, unchanged) and
+  `delegated`; any other value, `open` included, is refused at boot and by `bin/check-config.js`
+  (anonymous client registration was never offered, but the value was not checked). Every registry
+  client has a validation level decided by the server (`appValidated`, `publisherValidated` or
+  `nonValidated`), returned by `POST /oauth2/authorize/offer` and stamped on grants and sessions.
+  The operator sets, per level, whether consent is allowed, limited to testers or refused, a scope
+  template, and a maximum number of grants; a level whose consent is refused also refuses the
+  refresh of grants already given. While the mode is `curated`, a client registered by a developer
+  is not served. Registration by developers comes with a later release.
+- **Operator action:** none with an unchanged `curated` configuration. Scripts that parse
+  `bin/oauth-client.js list` handle two more columns. Read `docs/oauth2.md` before setting
+  `delegated`.
+
+#### Lower-severity fixes in 2.0.0-rc.91
+
+- **Reference nginx configuration:** `docs/nginx-ingress-sample.conf` matched the OAuth2 token and
+  authorization routes with exact, case-sensitive locations, while the core accepts any letter case
+  and a trailing slash, so `/OAuth2/token` or `/oauth2/token/` reached the core outside the OAuth2
+  rate limits. The locations are now case-insensitive with an optional trailing slash, and the
+  introspection and revocation routes, which check the client secret, share the token route's
+  limit.
+- **Audit trail kept after an erasure (`audit.onUserDelete: keep`):** the kept trail now ends with
+  an `account.deleted` record (who erased the account, as ids and fixed words only), and a restore
+  writes `account.restored`. The auto-deletion sweep's own erasure record no longer holds the
+  username, which it kept after the account was gone. A restore over an existing account
+  (`--overwrite`), its roll-back and the cleanup of a failed restore no longer remove the kept
+  trail, and a restore under another user id onto the id of an erased account is refused without
+  `--restore-erased`, so a backup is no longer merged into the kept trail of the erased account
+  that held that id. With `erase` (the default) nothing changes.
+- **Platform database engine switch:** `bin/migrate-platform.js` (between rqlite and PostgreSQL)
+  copied only some platform rows: the OAuth2 clients, their revocation lists and grants, the
+  erasure ledger (which a restore reads to refuse an account erased after its backup), the access
+  index of `GET /system/accesses/:accessId`, the external ids and the send budgets were lost. It now
+  copies every row, and without `--force` refuses a target that holds any platform row.
+- **Mail switches (BREAKING):** `services.email.enabled` is a boolean and each mail has its own
+  `services.email.send...` switch. A configuration that still holds the former object, in any
+  source, environment variables included, stops the boot and is named key by key, rather than read,
+  so that a mail switched off is never sent again because of the upgrade; a switch that is neither
+  `true` nor `false` (an empty value, a quoted `'false'`), which counted as on, is refused as well.
+- **Storage engines:** each storage type has an interface version, and the server refuses to start
+  when a discovered engine declares another one, before loading its code. The platform storage
+  interface moves to version 2 with this release.
+- **Operator action:** before upgrading, run `bin/check-config.js` and replace a
+  `services.email.enabled` object with the flat switches (`MIGRATION-services-email-enabled.md`);
+  roll the configuration back together with the image. If you copied
+  `docs/nginx-ingress-sample.conf`, update your copy. Update or remove engine folders under
+  `storages/engines/` that this release does not ship; an engine maintained elsewhere implements the
+  two new platform storage methods and declares version 2. Audit filters that list methods one by
+  one add `account.deleted` and `account.restored` (`account.all` and `all` include them).
+
 ---
 
 ## 5. Known residual risks and planned work
@@ -2867,7 +2983,9 @@ and on the destination's clock being within a minute of the host's.
 - Cluster join: a certificate-signing-request flow (the joiner generates its key; short-lived node
   certificates), replacing bundles that carry the admin key.
 - rqlite HTTP API authentication.
-- A core-to-core credential distinct from the admin key.
+- A core-to-core credential distinct from the admin key. Since 2.0.0-rc.91,
+  `auth.adminAccessKeyScope: break-glass` limits the admin key to the `/system` routes that need it,
+  calls between cores among them.
 - Use-time clipping of a child access to its managing access, which also narrows children created
   before rc.43 (today `bin/access-scope-audit.js` reports them).
 - HF series keyed by account id instead of username. Until then, a username change moves the
@@ -2945,3 +3063,4 @@ This report is updated with every release that carries a security fix:
 | 25 | 2026-11-17 | 2.0.0-rc.40 to 2.0.0-rc.86 | Adds 2.0.0-rc.86: no new finding, counts unchanged; the second step of the 2.0.0-rc.51 backup finding ships (every file of a backup run authenticated, signed runs; removed from section 5, which gains the backup residual risks; six findings keep a planned second step), the 2.0.0-rc.43 cache item is completed (cache invalidation between the processes of a core), and lower-severity fixes, among them a custom data store named after a built-in store that came within reach of `*` permissions (section 4.1 qualified). Deployed on the maintainers' platforms (2026-11-17). |
 | 26 | 2026-11-18 | 2.0.0-rc.40 to 2.0.0-rc.87 | Adds 2.0.0-rc.87: no new finding, counts unchanged; two items of the limits work planned in section 5 ship (a time limit on the PostgreSQL work of API requests, a bound on the password checks running at once), and the resource-quotas paragraph of section 5 is updated (the per-account cap on requests in flight stays planned); one lower-severity fix reported through the public issue tracker (the session of a composed OAuth2 re-consent holds the request only). Deployed on the maintainers' platforms (2026-11-18). |
 | 27 | 2026-11-26 | 2.0.0-rc.40 to 2.0.0-rc.90 | Release table adds 2.0.0-rc.88 (Node.js 24.22.3 runtime update, CI actions pinned) and 2.0.0-rc.89 (the erasure ledger, not an audit release); section 4 adds 2.0.0-rc.90: 1 High finding (a consent accept could take over another counterparty's relationship), counts 74 (24 High); two lower-severity fixes rated Medium and not counted (a second consent accept on the same scope left the first working; platform writes lost during a leader change); the limits and token work planned in section 5 ships (per-account, per-access and per-connection limits, cached routing lookups with a DNS response rate limit, a floor on chosen tokens, keyed store hashes, signed webhook calls, feature permission names a closed set), and the at-rest envelope is written; completion steps of the 2.0.0-rc.40 placeholder-secret and 2.0.0-rc.72 erasure items; rqlite 10.7.5 (dependency update); section 5 updated (resource quotas, container image, token hardening; the feature-name item removed). Deployed on the maintainers' platforms (2.0.0-rc.88 on 2026-11-25, 2.0.0-rc.90 with 2.0.0-rc.89 on 2026-11-26). |
+| 28 | 2026-11-27 | 2.0.0-rc.40 to 2.0.0-rc.91 | Adds 2.0.0-rc.91: no new finding, counts unchanged (74, 24 High); new administration surface reviewed before merge (platform setup with a one-time code, administrator sessions with step-up and roles, an origin rule on `/system`, an opt-in break-glass scope for the admin key) and OAuth2 client validation levels; hardening (registration closed on a fresh install until setup, MFA sessions checked by kind, storage engine interface versions checked at boot); lower-severity fixes (reference nginx OAuth2 locations, the audit trail kept under `keep`, `bin/migrate-platform.js` copying every platform row, mail switches that are not booleans refused); sections 3.1, 3.2, 3.3 and 4.1 add the administration surface; section 5 notes the break-glass scope under the core-to-core credential item. Deployed on the maintainers' platforms (2026-11-27). |
