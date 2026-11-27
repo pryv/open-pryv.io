@@ -88,6 +88,44 @@ describe('[EGLM] events.get limit, skip and streaming', function () {
     });
   });
 
+  describe('[EGLT] events sharing a time', function () {
+    const TIED = 24;
+    let tieStreamId;
+
+    before(async function () {
+      // SQLite: equal times come back in a stable order whatever the plan.
+      // PostgreSQL has no tie-breaker yet (one without an index on
+      // (user_id, time, id) slows restricted pages down): not asserted there.
+      if (getConfigUnsafe().get('storages:base:engine') === 'postgresql') this.skip();
+      tieStreamId = 'eglt-' + cuid.slug();
+      await coreRequest.post(`/${username}/streams`).set('Authorization', token).send({ id: tieStreamId, name: tieStreamId });
+      // 6 times, 4 events each.
+      for (let i = 0; i < TIED; i++) {
+        const res = await coreRequest.post(`/${username}/events`).set('Authorization', token)
+          .send({ streamIds: [tieStreamId], type: 'note/txt', content: 't' + i, time: 2000 + Math.floor(i / 4) });
+        assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+      }
+    });
+
+    for (const sortAscending of [false, true]) {
+      it(`[EGLT1] pages read with skip neither repeat nor miss an event (${sortAscending ? 'oldest' : 'newest'} first)`, async function () {
+        const all = await getEvents({ streams: [tieStreamId], limit: TIED, sortAscending });
+        assert.strictEqual(all.status, 200, JSON.stringify(all.body));
+        const expected = all.body.events.map((e) => e.id);
+        assert.strictEqual(new Set(expected).size, TIED);
+        for (const limit of [3, 5, 7]) {
+          const paged = [];
+          for (let skip = 0; skip < TIED; skip += limit) {
+            const res = await getEvents({ streams: [tieStreamId], limit, skip, sortAscending });
+            assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+            paged.push(...res.body.events.map((e) => e.id));
+          }
+          assert.deepStrictEqual(paged, expected, 'limit ' + limit);
+        }
+      });
+    }
+  });
+
   describe('[EGLC] PostgreSQL cursor', function () {
     let DatabasePG, original;
     const opened = [];

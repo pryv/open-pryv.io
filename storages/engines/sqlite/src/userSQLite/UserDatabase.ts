@@ -256,7 +256,8 @@ UserDatabase.prototype.getEventsStreamed = function (this: UserDatabaseInstance,
  * Runs the bounded walk of `query` (see `walksTimeIndex`): its rows when the
  * page is full, which makes it the exact answer; null when there is no
  * bounded walk, or when it fell short (the caller then runs the fallback).
- * The page holds at most `limit` rows, read at once.
+ * The page holds at most `limit` rows, read at once (for the streamed getter
+ * too: the read happens when it is called, not as the stream is consumed).
  */
 function boundedWalkPage (udb: UserDatabaseInstance, query: EventsGetQuery): EventRow[] | null {
   if (query.bounded == null) return null;
@@ -334,6 +335,8 @@ let candidateProbeCap = 20_000;
  *   on the `time` index alone); the caller falls back to the rowid set when
  *   that walk does not fill the page. A stream holding only old rows then
  *   costs the rowid set plus that bounded walk, not a scan of every newer row.
+ *   (`time >= from` keeps whole tie groups: a very large group of equal times
+ *   at the bound is read whole. Cost only, the rows stay exact.)
  *
  * @returns false for the rowid set, else the walk and its lower time bound
  */
@@ -1020,10 +1023,17 @@ function prepareQuery (params: GetParams = { query: [] }, isDelete = false): Sql
     const sort = params.options?.sort;
     if (sort) {
       const sorts: string[] = [];
-      for (const [field, order] of Object.entries(sort)) {
+      const entries = Object.entries(sort);
+      for (const [field, order] of entries) {
         const orderStr = order > 0 ? 'ASC' : 'DESC';
         sorts.push(`${column(field)} ${orderStr}`);
       }
+      // Equal times: rowid in the same direction, so that every plan (a walk of
+      // the `time` index, whose trailing key is the rowid, or a sorted rowid
+      // set) returns the same rows, and pages cut through a tie group neither
+      // repeat nor miss a row.
+      const last = entries[entries.length - 1];
+      if (last?.[0] === 'time') sorts.push(`rowid ${last[1] > 0 ? 'ASC' : 'DESC'}`);
       queryString += ' ORDER BY ' + sorts.join(', ');
     }
   }

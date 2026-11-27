@@ -13,8 +13,16 @@
   that walk does not fill the page. Measured on 16 000 to 32 000 rows: 1.1 to 2.2 ms instead of 4.6 to 30 ms; a
   stream holding only old rows pays the rowid set plus the bounded walk (10.1 vs 8.6 ms on 55 000 rows) instead
   of the 58 ms of an unbounded walk. Ascending pages and the at-cap plan are unchanged; same rows as the rowid set
-  (test `[SQQPB]`). `ANALYZE`, a WAL checkpoint, an FTS `optimize` or a larger page cache changed nothing
-  measurable. Test hook `_setBoundedWalk`.
+  (tests `[SQQPB]`, `[SQQPC]`). `ANALYZE`, a WAL checkpoint, an FTS `optimize` or a larger page cache changed
+  nothing measurable. Test hook `_setBoundedWalk`.
+- SQLite, events sharing a `time`: the time sort had no tie-breaker, so equal-time events came back in an order
+  that depended on the plan (ascending rowid from the sorted rowid set, descending from a walk of the `time`
+  index). A read paged with `skip` could switch plan between pages (the bounded walk for the first pages, the rowid
+  set deeper), and then repeated some events and missed others. The time sort now ends with `rowid` in the same
+  direction (the `time` index's trailing key, so the walks keep the index with no temporary sort): pages over
+  equal-time events no longer repeat or miss rows (tests `[SQQPC]`, `[EGLT1]`). PostgreSQL still orders equal
+  times as the scan gives them: a tie-breaker there needs an index on `(user_id, time, id)` (without it, a
+  restricted page of 20 measured 3 to 4 times slower under a parallel plan).
 - Through the API (one core, 2 workers, one user seeded with 16 000 events, then events created in 2 of the
   restricted streams): restricted `events.get?limit=20` went 12, 19, 27, 35, 43, 51 ms from 2 400 to 17 500
   events in those streams, then 5.6 ms past 20 000; now 4.3 to 5.9 ms throughout. A personal

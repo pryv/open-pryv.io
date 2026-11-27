@@ -93,6 +93,18 @@ describe('[SQQP] userSQLite events.get query plans', function () {
     return { rows, plan, sql, walked };
   }
 
+  // The same query through the rowid set only (no walk of any kind).
+  async function runRowidSet (storeQuery, storeOptions, db = userDb) {
+    const cap = _setCandidateProbeCap(1e9);
+    const bounded = _setBoundedWalk(false);
+    try {
+      return await run(storeQuery, storeOptions, db);
+    } finally {
+      _setBoundedWalk(bounded);
+      _setCandidateProbeCap(cap);
+    }
+  }
+
   it('[SQQP1] with no stream filter, walks the time index and stops at the limit (no full sort)', async function () {
     const { rows, plan, sql } = await run({ fromTime: -1e12, toTime: 1e12 }, { limit: 10 });
     assert.ok(!sql.includes('events_fts'), sql);
@@ -213,11 +225,7 @@ describe('[SQQP] userSQLite events.get query plans', function () {
       for (const [q, o] of cases) {
         const walked = await run(q, o);
         assert.ok(!walked.sql.includes('NOT INDEXED'), 'walked ' + JSON.stringify([q, o]));
-        _setCandidateProbeCap(1e9);
-        const bounded = _setBoundedWalk(false);
-        const set = await run(q, o);
-        _setBoundedWalk(bounded);
-        _setCandidateProbeCap(20);
+        const set = await runRowidSet(q, o);
         assert.match(set.sql, /NOT INDEXED/, set.sql);
         assert.deepStrictEqual(walked.rows.map((e) => e.id), set.rows.map((e) => e.id), JSON.stringify([q, o]));
         assert.ok(set.rows.length > 0, JSON.stringify([q, o]));
@@ -229,16 +237,22 @@ describe('[SQQP] userSQLite events.get query plans', function () {
 
   it('[SQQPB] newest first under the cap: a walk over the newest rows, the rowid set when it falls short; the same rows', async function () {
     // 400 rows: `old` holds the even rows of the oldest half, `recent` the even
-    // rows of the newest half (one trashed), `bulk` the odd rows.
+    // rows of the newest half (one trashed), `bulk` the odd rows, half of them
+    // `tagged` too; `sparse` every 4th row below 350 plus 2 newer ones. Every
+    // 5th row is running (no end time).
     const userId2 = userId + '-b';
     const db = await storage.forUser(userId2);
     try {
       for (let i = 0; i < 400; i++) {
+        const streamIds = [i % 2 === 1 ? 'bulk' : (i < 200 ? 'old' : 'recent')];
+        if (i % 4 === 1) streamIds.push('tagged');
+        if ((i % 4 === 0 && i < 350) || i === 380 || i === 396) streamIds.push('sparse');
         db.createEventSync({
           id: 'sqqpb-' + i,
-          streamIds: [i % 2 === 1 ? 'bulk' : (i < 200 ? 'old' : 'recent')],
+          streamIds,
           type: 'note/txt',
           time: 2000 + i,
+          endTime: i % 5 === 0 ? null : 2000 + i + 0.5,
           created: 2000 + i,
           createdBy: 'test',
           modified: 2000 + i,
@@ -269,35 +283,128 @@ describe('[SQQP] userSQLite events.get query plans', function () {
       const asc = await run({ streams: [[{ any: ['recent'] }]] }, { limit: 5, sortAscending: true }, db);
       assert.strictEqual(asc.walked, null);
       assert.match(asc.sql, /NOT INDEXED/, asc.sql);
-      // Same rows as the rowid set: skip, toTime, `not`, OR of blocks, trashed,
-      // and through `getEvents` too.
+      // A walk that finds some rows but fewer than the page: the rowid set
+      // returns the whole page, nothing lost or doubled.
+      const partial = await run({ streams: [[{ any: ['sparse'] }]] }, { limit: 5 }, db);
+      assert.ok(partial.walked != null && partial.sql !== partial.walked, partial.sql);
+      assert.deepStrictEqual(partial.rows.map((e) => e.id), ['sqqpb-396', 'sqqpb-380', 'sqqpb-348', 'sqqpb-344', 'sqqpb-340']);
+      // Same rows as the rowid set, through `getEvents` too. `mode`: `walk`
+      // (the bounded walk answers), `fallback` (tried, the rowid set answers),
+      // `set` (no walk). Arithmetic: 400 rows; `recent`, `old` and `tagged` 100
+      // candidates (a walk up to a page of 12), `bulk` 200 (up to 50), `sparse` 90.
+      const recentIds = ['recent', 'sqqpb-x1', 'sqqpb-x2', 'sqqpb-x3', 'sqqpb-x4', 'sqqpb-x5', 'sqqpb-x6', 'sqqpb-x7'];
       const cases = [
-        [{ streams: [[{ any: ['recent'] }]] }, { limit: 12 }],
-        [{ streams: [[{ any: ['recent'] }]], types: ['note/txt'] }, { limit: 5 }],
-        [{ streams: [[{ any: ['recent'] }]], modifiedSince: 2390 }, { limit: 2 }],
-        [{ streams: [[{ any: ['recent'] }]] }, { limit: 5, skip: 3 }],
-        [{ streams: [[{ any: ['recent'] }]], toTime: 2300 }, { limit: 5 }],
-        [{ streams: [[{ any: ['old'] }]], toTime: 2300 }, { limit: 5 }],
-        [{ streams: [[{ any: ['bulk'] }, { not: ['recent'] }]] }, { limit: 7 }],
-        [{ streams: [[{ any: ['old'] }], [{ any: ['recent'] }]] }, { limit: 6 }],
-        [{ state: 'all', streams: [[{ any: ['recent'] }]] }, { limit: 3 }],
-        [{ streams: [[{ any: ['recent'] }]] }, { limit: 0 }]
+        [{ streams: [[{ any: ['recent'] }]] }, { limit: 12 }, 'walk'],
+        [{ streams: [[{ any: ['recent'] }]], types: ['note/txt'] }, { limit: 5 }, 'walk'],
+        [{ streams: [[{ any: ['recent'] }]], modifiedSince: 2390 }, { limit: 2 }, 'walk'],
+        [{ streams: [[{ any: ['recent'] }]] }, { limit: 5, skip: 3 }, 'walk'],
+        [{ streams: [[{ any: ['recent'] }]], toTime: 2300 }, { limit: 5 }, 'walk'],
+        [{ streams: [[{ any: ['old'] }]], toTime: 2300 }, { limit: 5 }, 'fallback'],
+        // `not` removes rows inside the window (`tagged` rows also hold `bulk`).
+        [{ streams: [[{ any: ['bulk'] }, { not: ['tagged'] }]] }, { limit: 7 }, 'walk'],
+        [{ streams: [[{ any: ['old'] }], [{ any: ['recent'] }]] }, { limit: 6 }, 'walk'],
+        [{ state: 'all', streams: [[{ any: ['recent'] }]] }, { limit: 3 }, 'walk'],
+        [{ state: 'trashed', streams: [[{ any: ['recent'] }]] }, { limit: 2 }, 'fallback'],
+        [{ streams: [[{ any: ['recent'] }]], running: true }, { limit: 5 }, 'walk'],
+        // A time frame including now: end time at or after `fromTime`, or running.
+        [{ streams: [[{ any: ['recent'] }]], fromTime: 2390 }, { limit: 5 }, 'walk'],
+        // A past time frame: end time at or after `fromTime` only.
+        [{ streams: [[{ any: ['recent'] }]], fromTime: 2300, toTime: 2390 }, { limit: 5 }, 'walk'],
+        // 8 ids or more: the bound JSON list form of the exact condition.
+        [{ streams: [[{ any: recentIds }]] }, { limit: 5 }, 'walk'],
+        [{ streams: [[{ any: ['sparse'] }]] }, { limit: 5 }, 'fallback'],
+        // Deep enough to leave the walk; past every match.
+        [{ streams: [[{ any: ['recent'] }]] }, { limit: 5, skip: 20 }, 'set'],
+        [{ streams: [[{ any: ['recent'] }]] }, { limit: 5, skip: 200 }, 'set', true],
+        // Past every match of the window: an empty walk, the rowid set answers.
+        [{ state: 'trashed', streams: [[{ any: ['recent'] }]] }, { limit: 2, skip: 3 }, 'fallback', true],
+        [{ streams: [[{ any: ['recent'] }]] }, { limit: 0, skip: 2 }, 'walk', true],
+        [{ streams: [[{ any: ['recent'] }]] }, { limit: 0 }, 'set', true]
       ];
-      for (const [q, o] of cases) {
+      for (const [q, o, mode, empty] of cases) {
+        const label = JSON.stringify([q, o]);
         const walked = await run(q, o, db);
+        if (mode === 'set') assert.strictEqual(walked.walked, null, 'no walk ' + label);
+        else assert.ok(walked.walked != null, 'walk tried ' + label);
+        if (mode === 'walk') assert.strictEqual(walked.sql, walked.walked, 'walk answers ' + label);
+        if (mode === 'fallback') assert.notStrictEqual(walked.sql, walked.walked, 'rowid set answers ' + label);
         const list = db.getEvents({ query: localStorePrepareQuery(q), options: localStorePrepareOptions(o) });
-        const bounded = _setBoundedWalk(false);
-        const set = await run(q, o, db);
-        _setBoundedWalk(bounded);
+        const set = await runRowidSet(q, o, db);
         assert.strictEqual(set.walked, null);
         assert.match(set.sql, /NOT INDEXED/, set.sql);
-        assert.deepStrictEqual(walked.rows.map((e) => e.id), set.rows.map((e) => e.id), JSON.stringify([q, o]));
-        assert.deepStrictEqual(list.map((e) => e.id), set.rows.map((e) => e.id), 'getEvents ' + JSON.stringify([q, o]));
-        assert.ok(set.rows.length > 0 || o.limit === 0, JSON.stringify([q, o]));
+        assert.deepStrictEqual(walked.rows.map((e) => e.id), set.rows.map((e) => e.id), label);
+        assert.deepStrictEqual(list.map((e) => e.id), set.rows.map((e) => e.id), 'getEvents ' + label);
+        assert.strictEqual(set.rows.length === 0, empty === true, label);
       }
     } finally {
       storage.closeUser(userId2);
       try { await userLocalDirectory.deleteUserDirectory(userId2); } catch (_e) { /* best-effort */ }
+    }
+  });
+
+  it('[SQQPC] equal times: the walks and the rowid set return the same rows, and pages neither repeat nor miss a row', async function () {
+    // 400 rows, times in groups of 7 equal values; `ta` on the even rows (200
+    // candidates: a bounded walk up to a page of 50, over the newest 16 x page
+    // rows, so the window bound cuts tie groups).
+    const userId3 = userId + '-c';
+    const db = await storage.forUser(userId3);
+    const ids = (r) => r.rows.map((e) => e.id);
+    try {
+      for (let i = 0; i < 400; i++) {
+        db.createEventSync({
+          id: 'sqqpc-' + i,
+          streamIds: [i % 2 === 0 ? 'ta' : 'tb'],
+          type: 'note/txt',
+          time: 3000 + Math.floor(i / 7),
+          created: 3000 + i,
+          createdBy: 'test',
+          modified: 3000 + i,
+          modifiedBy: 'test'
+        });
+      }
+      const ta = { streams: [[{ any: ['ta'] }]] };
+      // The bounded walk keeps the time index with the tie-breaker (rowid is
+      // the index's trailing key): no temporary sort.
+      const first = await run(ta, { limit: 5 }, db);
+      assert.ok(first.walked != null && first.sql === first.walked, first.sql);
+      assert.match(first.plan, /USING INDEX events_time/, first.plan);
+      assert.doesNotMatch(first.plan, /TEMP B-TREE/, first.plan);
+      // Limits and skips cutting tie groups, a `toTime` inside a group.
+      const cases = [
+        [ta, { limit: 5 }],
+        [ta, { limit: 5, skip: 5 }],
+        [ta, { limit: 3, skip: 2 }],
+        [ta, { limit: 7 }],
+        [{ ...ta, toTime: 3050 }, { limit: 6, skip: 1 }]
+      ];
+      for (const [q, o] of cases) {
+        const walked = await run(q, o, db);
+        assert.ok(walked.walked != null && walked.sql === walked.walked, 'walk answers ' + JSON.stringify([q, o]));
+        assert.deepStrictEqual(ids(walked), ids(await runRowidSet(q, o, db)), JSON.stringify([q, o]));
+      }
+      // Two pages, the first from the bounded walk, the second from the rowid
+      // set (too deep for the walk), equal one read of both.
+      const page1 = await run(ta, { limit: 30 }, db);
+      assert.ok(page1.walked != null && page1.sql === page1.walked, page1.sql);
+      const page2 = await run(ta, { limit: 30, skip: 30 }, db);
+      assert.strictEqual(page2.walked, null);
+      const both = await run(ta, { limit: 60 }, db);
+      assert.deepStrictEqual([...ids(page1), ...ids(page2)], ids(both));
+      assert.strictEqual(new Set(ids(both)).size, 60);
+      // The whole walk at the cap, newest and oldest first.
+      const previous = _setCandidateProbeCap(100);
+      try {
+        for (const o of [{ limit: 5, skip: 5 }, { limit: 7, sortAscending: true }, { limit: 4, skip: 3, sortAscending: true }]) {
+          const walked = await run(ta, o, db);
+          assert.ok(walked.walked == null && !walked.sql.includes('NOT INDEXED') && !walked.sql.includes('time >= ?'), walked.sql);
+          assert.deepStrictEqual(ids(walked), ids(await runRowidSet(ta, o, db)), JSON.stringify(o));
+        }
+      } finally {
+        _setCandidateProbeCap(previous);
+      }
+    } finally {
+      storage.closeUser(userId3);
+      try { await userLocalDirectory.deleteUserDirectory(userId3); } catch (_e) { /* best-effort */ }
     }
   });
 
