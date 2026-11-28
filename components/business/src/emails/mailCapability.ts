@@ -160,13 +160,7 @@ export const MAIL_KINDS = {
   externalIdReleased: 'external-id-release',
   accountDeletionScheduled: 'auto-deletion confirmation',
   accountDeletionReminder: 'auto-deletion reminder',
-  accountDeletionBlocked: 'auto-deletion on-hold',
-  accountTransferNamed: 'transfer beneficiary named',
-  accountTransferClaim: 'transfer claim link',
-  accountTransferStarted: 'transfer started',
-  accountTransferCancelled: 'transfer cancelled',
-  accountTransferLapsed: 'transfer lapsed',
-  accountTransferCompleted: 'transfer completed'
+  accountDeletionBlocked: 'auto-deletion on-hold'
 } as const;
 
 export type MailKind = keyof typeof MAIL_KINDS;

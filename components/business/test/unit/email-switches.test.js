@@ -38,7 +38,7 @@ describe('[EMFL] mail switches', function () {
     const sendKeys = Object.keys(email).filter((k) => /^send[A-Z]/.test(k)).sort();
     assert.deepEqual(sendKeys, KINDS.map(mailSwitchKey).sort());
     assert.equal(mailSwitchKey('resetPassword'), 'sendResetPassword');
-    assert.equal(mailSwitchKey('accountTransferClaim'), 'sendAccountTransferClaim');
+    assert.equal(mailSwitchKey('accountDeletionReminder'), 'sendAccountDeletionReminder');
   });
 
   it('[EMFL2] on by default; send<Kind>: false turns that class off only; enabled: false turns every class off', function () {
