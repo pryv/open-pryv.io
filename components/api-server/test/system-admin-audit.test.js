@@ -315,7 +315,9 @@ describe('[SYAU] platform trail, attribution, trail read and users paging', func
     const [rec] = rows;
     assert.ok(rec.streamIds.includes('access-admin'), JSON.stringify(rec.streamIds));
     assert.deepEqual(rec.content.record, { subject: { via: 'admin-key' }, target: { userId: target.userId, usernameHash: nameHashOf(target.username), hashKeyId: hashKeyId() } });
-    assert.ok(!JSON.stringify(rec).includes(target.username), 'never the name');
+    // (A test fixture may give the account its name as id: that one occurrence is the id.)
+    const occurrences = JSON.stringify(rec).split(target.username).length - 1;
+    assert.equal(occurrences, target.userId === target.username ? 1 : 0, 'never the name: ' + JSON.stringify(rec));
     since = now();
     const nobody = 'syaunodel' + slug();
     assert.ok((await coreRequest.delete('/users/' + nobody)).status >= 400, 'refused without a credential');
@@ -378,8 +380,14 @@ describe('[SYAU] platform trail, attribution, trail read and users paging', func
 
   it('[SYAU12] admin-key writes under /reg (invitations, DNS records, core rename) are administration acts in the platform trail, done or refused, never a token; an unauthorized call is not recorded', async () => {
     let since = now();
+    // Invitation tokens close registration to anyone without one: removed at the end.
+    const tokensBefore = new Set((await db.getAllInvitationTokens()).map((t) => t.id));
     const inv = await coreRequest.get('/reg/admin/invitations/post?count=2&message=syau-free-text').set('authorization', adminKey);
-    assert.equal(inv.status, 200, JSON.stringify(inv.body));
+    try {
+      assert.equal(inv.status, 200, JSON.stringify(inv.body));
+    } finally {
+      for (const t of await db.getAllInvitationTokens()) if (!tokensBefore.has(t.id)) await db.deleteInvitationToken(t.id);
+    }
     let [rec] = await trail(PLATFORM_TRAIL_USER_ID, 'system.reg.invitations.create', since);
     assert.ok(rec != null, 'invitations recorded');
     assert.deepEqual(rec.content.record.subject, { via: 'admin-key' });
