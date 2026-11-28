@@ -416,30 +416,30 @@ async function runCreateRegistry (platform, args, persistClient, getClient) {
 async function runSetStatus (platform, args, getClient, persistClient) {
   if (!args.positional[0]) throw new Error(args.command + ': <clientId> required');
   const clientId = cliClientKey(args.positional[0]);
-  const existing = await getClient(platform, clientId);
-  if (existing == null) throw new Error(args.command + ': no client "' + clientId + '"');
   const status = args.command === 'suspend' ? 'suspended' : 'active';
-  const from = existing.status ?? 'active';
-  // Approving a change is a decision of its own: resume does not take it.
-  if (args.command === 'resume' && from === 'review') {
-    throw new Error('resume: client "' + clientId + '" is under review (its redirect URIs, keys or scope changed); ' +
-      'approve it with update ' + clientId + ' --approve');
+  const { setClientStatus, ClientReviewError } = require('oauth2/src/clientReview.ts');
+  // Only the status changes, written as is (without the registration rules).
+  // Approving a change is a decision of its own: resume does not take it, and
+  // a change made while suspended goes live only once approved.
+  let outcome;
+  try {
+    outcome = await setClientStatus(platform, clientId, { status, by: cliActor() });
+  } catch (err) {
+    if (!(err instanceof ClientReviewError)) throw err;
+    if (err.code === 'unknown-client') throw new Error(args.command + ': no client "' + clientId + '"');
+    if (err.code === 'needs-approval' && err.data.status === 'review') {
+      throw new Error('resume: client "' + clientId + '" is under review (its redirect URIs, keys or scope changed); ' +
+        'approve it with update ' + clientId + ' --approve');
+    }
+    if (err.code === 'needs-approval') {
+      const unapproved = err.data.fields;
+      throw new Error('resume: changes to ' + (unapproved.length > 0 ? unapproved.join(', ') : 'vetted fields') + ' of "' + clientId +
+        '" were not approved; approve them with update ' + clientId + ' --approve, then resume');
+    }
+    throw err;
   }
-  // A change made while suspended goes live only once approved.
-  const unapproved = args.command === 'resume' && from === 'suspended' && existing.kind === 'registry' ? unapprovedChanges(existing) : null;
-  if (unapproved != null) {
-    throw new Error('resume: changes to ' + (unapproved.length > 0 ? unapproved.join(', ') : 'vetted fields') + ' of "' + clientId +
-      '" were not approved; approve them with update ' + clientId + ' --approve, then resume');
-  }
-  if (from === status) {
-    console.log('OK   client ' + clientId + ' is ' + status + ' (unchanged)');
-  } else {
-    // Only the status changes: written as is, without the registration rules
-    // (a row registered before a newer rule must stay suspendable).
-    const row = withStatusChange({ ...existing, status, updatedAt: Date.now() }, { from, to: status, reason: args.command });
-    await oauthStorage().setClient(platform, row);
-    console.log('OK   client ' + clientId + ' is ' + status);
-  }
+  const existing = outcome.before;
+  console.log('OK   client ' + clientId + ' is ' + status + (outcome.changed ? '' : ' (unchanged)'));
   // A client metadata document row no consent reached yet.
   if (existing.origin === 'metadata-document' && existing.metadata?.firstConsentAt == null && existing.metadata?.operatorRefreshedAt == null) {
     console.log(status === 'suspended'
@@ -619,9 +619,11 @@ async function printValidation (platform, client) {
   }
 }
 
-// The identity the CLI acts under, as written in a row's statusLog.
+// The identity the CLI acts under, as written in a row's statusLog and its
+// app review (`cli:` keeps it apart from an account id or `admin-key`, which
+// the administration routes write).
 function cliActor () {
-  return process.env.USER ?? 'operator';
+  return ('cli:' + (process.env.USER ?? 'operator')).slice(0, 128);
 }
 
 // Operator app review of a developer's client: `validate` records it (the
@@ -633,39 +635,34 @@ async function runValidate (platform, args, getClient, persistClient) {
   const command = args.command;
   if (!args.positional[0]) throw new Error(command + ': <clientId> required');
   const clientId = cliClientKey(args.positional[0]);
-  const existing = await getClient(platform, clientId);
-  if (existing == null) throw new Error(command + ': no client "' + clientId + '"');
-  if (existing.origin !== 'developer') {
-    throw new Error(command + ': "' + clientId + '" ' + (existing.origin === 'metadata-document'
-      ? 'is a metadata-document client: its level follows oauth.clientMetadataDocuments.mode (allowList: publisherValidated, any: nonValidated)'
-      : 'was registered by the operator: it is appValidated by rule'));
-  }
-  const { validationDigest, VALIDATION_DIGEST_VERSION } = require('oauth2/src/clientValidation.ts');
-  const status = existing.status ?? 'active';
-  let row;
-  if (command === 'validate') {
-    // The operator approves the row it reviewed: the digest `show` printed
-    // must still be the row's (a change in between is refused, not approved unseen).
-    const current = validationDigest(existing);
-    // (A digest starting with "--" reads as a flag: it may also follow the client id alone.)
-    const given = typeof args.flagsScalar?.digest === 'string' ? args.flagsScalar.digest : args.positional[1];
-    if (typeof given !== 'string' || given.length === 0) {
+  const { approveClient, withdrawReview, ClientReviewError } = require('oauth2/src/clientReview.ts');
+  // The operator approves the row it reviewed: the digest `show` printed
+  // must still be the row's (a change in between is refused, not approved
+  // unseen). Changes a client is held for are approved by update --approve.
+  // (A digest starting with "--" reads as a flag: it may also follow the client id alone.)
+  const given = typeof args.flagsScalar?.digest === 'string' ? args.flagsScalar.digest : args.positional[1];
+  let outcome;
+  try {
+    outcome = command === 'validate'
+      ? await approveClient(platform, clientId, { digest: given, by: cliActor(), approveChanges: false })
+      : await withdrawReview(platform, clientId, { by: cliActor() });
+  } catch (err) {
+    if (!(err instanceof ClientReviewError)) throw err;
+    if (err.code === 'unknown-client') throw new Error(command + ': no client "' + clientId + '"');
+    if (err.code === 'not-applicable') throw new Error(command + ': "' + clientId + '" ' + err.message);
+    if (err.code === 'digest-required') {
       throw new Error('validate: --digest <digest> required: review the client with show ' + clientId + ', then pass the review digest it prints');
     }
-    if (given !== current) {
-      throw new Error('validate: the client "' + clientId + '" changed since the review digest given (now ' + current + '): review it again with show');
+    if (err.code === 'stale-digest') {
+      throw new Error('validate: the client "' + clientId + '" changed since the review digest given (now ' + err.data.digest + '): review it again with show');
     }
-    row = { ...existing, validation: { app: { v: VALIDATION_DIGEST_VERSION, at: Date.now(), by: cliActor(), digest: current } } };
-  } else {
-    if (existing.validation?.app == null) {
-      console.log('OK   client ' + clientId + ' has no app review (unchanged)');
-      return;
-    }
-    row = { ...existing };
-    delete row.validation;
+    throw err;
   }
-  await persistClient(platform, withStatusChange(row, { from: status, to: status, reason: command }));
-  const v = await validationOf(platform, row);
+  if (!outcome.changed) {
+    console.log('OK   client ' + clientId + ' has no app review (unchanged)');
+    return;
+  }
+  const v = await validationOf(platform, outcome.client);
   console.log('OK   client ' + clientId + (command === 'validate' ? ' validated' : ' review withdrawn') + ': level ' + v.level);
 }
 
@@ -1328,11 +1325,7 @@ function vettingChange (existing, row, args) {
  * the trail after its last `approve`), or null when there are none.
  */
 function unapprovedChanges (row) {
-  const log = Array.isArray(row.statusLog) ? row.statusLog : [];
-  const lastApprove = log.findLastIndex((e) => e?.reason === 'approve');
-  const pending = log.slice(lastApprove + 1).filter((e) => e?.reason === 'review');
-  if (pending.length === 0) return null;
-  return [...new Set(pending.flatMap((e) => (Array.isArray(e.fields) ? e.fields : [])))];
+  return require('oauth2/src/clientReview.ts').unapprovedChanges(row);
 }
 
 function printVetting (clientId, vetting) {

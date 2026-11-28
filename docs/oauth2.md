@@ -1500,7 +1500,8 @@ by an upgrade. A publisher is the account that owns the client; its decision
 is the platform row `dev-publisher/<userId>` (`status: validated` makes it
 Publisher Validated; absent, pending or suspended: not validated; its display
 name, at most 128 characters without control or bidirectional-formatting
-characters, is answered only once validated).
+characters, is answered only once validated). Reviewers decide about
+publishers and approve apps over HTTP (§ 3d); the CLI validates apps (§ 3b).
 
 **`levels.<level>`** is what a client of that level may do (absent: as
 before, everything allowed):
@@ -2058,10 +2059,12 @@ it; `resume` does not. A change made while the client is suspended is recorded
 and the status kept; `resume` then refuses until `update <clientId> --approve`
 approves it (the client staying suspended). `--approve` is an update like any
 other: every write rule applies to the row. Each change of status (and each
-approved change) is kept in the row's `statusLog` (time, `by`: the OS user the
-CLI ran as, `operator` when unset, from, to, reason, fields; the last 50),
-printed by `show`, never handed to the extension. It is a trail, not an
-identity record. App-account clients have no review step.
+approved change) is kept in the row's `statusLog` (time, `by`: `cli:` and the
+OS user the CLI ran as, `cli:operator` when unset, or the account id or
+`admin-key` for an act made over HTTP (§ 3d); from, to, reason, fields, and
+the reviewer's `note` when one was given; the last 50), printed by `show`,
+never handed to the extension. It is a trail, not an identity record.
+App-account clients have no review step.
 
 **Origin and validation level** (§ 2, `clientRegistration`). `show` prints
 `origin: operator | developer (owner <userId>) | metadata-document` and
@@ -2079,13 +2082,16 @@ node bin/oauth-client.js unvalidate <clientId>                 # withdraw it
 must still be the row's review digest (a change in between is refused, so
 nothing is approved unseen; a digest starting with `--` may follow the client
 id without the flag). It stores `validation.app = { v, at, by, digest }`
-(`by`: the OS user the CLI runs as, `operator` when unset, as in the
-`statusLog`); any later change of a reviewed field (an `update` included)
-drops the App Validated level until the next `validate`. Both are kept in the
-`statusLog` (reasons `validate`, `unvalidate`); no audit row is written yet. They refuse an operator's client (App Validated by rule) and a
+(`by` as in the `statusLog`); any later change of a reviewed field (an
+`update` included) drops the App Validated level until the next `validate`.
+Both are kept in the `statusLog` (reasons `validate`, `unvalidate`), which is
+the record of a CLI act (the CLI runs outside the server: it writes no audit
+row). They refuse an operator's client (App Validated by rule) and a
 metadata-document client (its level follows
-`oauth.clientMetadataDocuments.mode`). `purge-grants` and `revoke` also give
-back the accounts the client counted against `maxGrants`.
+`oauth.clientMetadataDocuments.mode`). `validate` does not approve the changes
+a client under review is held for: `update --approve` does (the HTTP `approve`
+does both, § 3d). `purge-grants` and `revoke` also give back the accounts the
+client counted against `maxGrants`.
 
 **Profile** (registry clients; `none` clears on `update`, none of these puts
 the client under review): `--localized-name <lang>=<text>` (repeatable; the
@@ -2221,6 +2227,95 @@ authentication method drops it.
 
 ---
 
+## 3d. Review over HTTP (`/system/admin/oauth`)
+
+The review acts of § 3b (`validate`, `unvalidate`, `suspend`, `resume`,
+`update --approve` without other change) and the decisions about publishers
+are also served over HTTP, for the administration portal and scripts. The
+same code writes the row as the CLI does: an act gives the same row whoever
+makes it, apart from `by` (the account id, or `admin-key`) and the reviewer's
+`note`. Creating or editing clients stays with the CLI.
+
+| Route | Permission |
+|---|---|
+| `GET /system/admin/oauth/clients?queue=true&origin=&status=` | `oauthClients:read` |
+| `GET /system/admin/oauth/clients/:clientId` | `oauthClients:read` |
+| `POST /system/admin/oauth/clients/:clientId/approve` `{ digest, reason? }` | `oauthClients:review` |
+| `POST /system/admin/oauth/clients/:clientId/unvalidate` `{ reason }` | `oauthClients:review` |
+| `POST /system/admin/oauth/clients/:clientId/suspend` `{ reason }` | `oauthClients:review` |
+| `POST /system/admin/oauth/clients/:clientId/resume` `{ reason? }` | `oauthClients:review` |
+| `GET /system/admin/oauth/publishers?status=` | `publishers:read` |
+| `GET /system/admin/oauth/publishers/:userId` | `publishers:read` |
+| `PUT /system/admin/oauth/publishers/:userId` `{ status, displayName?, regions?, reason }` | `publishers:review` |
+
+They take an administrator session (`Authorization: AdminSession <token>`)
+or the admin key in scope `full` (refused under `break-glass`); none asks
+for a second factor (each act is reversible and recorded). The `app-reviewer`
+role holds every permission above; `operator`, `auditor` and `viewer` hold the
+two reads.
+
+**Region rule.** OAuth clients and publishers are platform-wide, so these
+permissions come only from grants at scope `platform` or `region:<r>` (a zone,
+hosting or core scope gives none, and the `localGrants` of a core's local
+policy never do; a local policy may still withhold them on its core). Each
+route then keeps to the rows the caller's grants holding its permission
+cover: a grant at scope `platform` covers every row; a grant at
+`region:<r>` covers a row whose `regions` are all `r`; a row with no
+`regions` (every region) needs `platform`. This holds for the lists and the
+reads too. A row out of reach answers 404, as a missing one (and as a missing
+permission). A publisher row is judged on its own `regions` (absent:
+`platform`), and a decision may only leave it in regions the reviewer covers.
+A publisher decision counts for every client of the account, on every core:
+so creating a publisher row (none stored yet) needs scope `platform`, and a
+reviewer scoped to a region decides only the rows a platform reviewer
+assigned to its region (for another account it gets 404).
+
+**A client** is answered as `show` prints it: `{ client, validation, digest,
+reviewStands, inQueue }`, where `client` is the row with `"clientSecretHash":
+"(set)"` (never the hash), key sets by thumbprint, a capability URL's token
+masked, and its `statusLog`; `validation` is the block the consent screen gets
+(`level`, `publisher`, `validatedAt`); `digest` the review digest of the row as
+it stands; `reviewStands` whether its stored app review still matches.
+**The queue** (`queue=true`) is computed at each read: developer clients whose
+review does not stand, and clients under review. The list answers one line
+per client (id, kind, origin, owner, name, status, regions, the same review
+fields). Both lists take `limit` (1 to 1000) and `skip`; without them every
+row is answered.
+
+**`approve`** validates the row as the reviewer saw it: `digest` must be the
+row's current review digest, else `409` (`stale-resource`) and nothing is
+written; the answer does not give the new digest: the reviewer reads the
+client again, so what is approved is always what was read. On a developer's client it records
+the app review (`validation.app`, `by` the acting account); on a registry
+client under review it also approves the held changes (back to `active`), and
+on a suspended one it approves the changes made meanwhile (it stays
+suspended, `resume` then works), as `update --approve` does. On an operator's
+or a metadata-document client with nothing held it is refused (`400`).
+`unvalidate` withdraws a developer's client review; `resume` refuses a client
+under review or holding unapproved changes (`400`: approve it first).
+Each act answers the client as above, with `changed`.
+
+**A publisher decision** writes the row `{ status, displayName?, regions?,
+statusLog, updatedAt }` (`status`: `none`, `pending`, `validated`,
+`suspended`; `displayName` and `regions` left out are kept, `null` removes
+them; the trail entry is `{ at, by, from, to, reason }`, the last 50). The
+badge of the publisher's apps follows on every core at its next consent offer
+or refresh (the row is read each time, nothing is cached). Until developer
+requests exist, a reviewer decides about a publisher directly.
+
+**Audit.** Every act is recorded in the core's platform trail (method id,
+who acted with the grant that gave the permission, `target` = `{ clientId }`
+or `{ publisherUserId }`, `diff` = status and level before and after, the
+reason and, for `approve`, the digest), in the acting administrator's own
+trail (`admin.act`), and, when that account is on this core, in the trail of
+the client's owner (`oauth.client.reviewed`) or of the publisher
+(`oauth.publisher.reviewed`). That account reads its own trail: the record
+there gives the act, the statuses and the reviewer's reason (write it for the
+developer to read), and names the actor `platform-administrator`, never the
+administrator's account. The reads are not recorded.
+
+---
+
 ## 4. Reverse proxy & rate limiting
 
 **open-pryv.io does not rate-limit `/oauth2/*` itself.** The authorization and
@@ -2274,6 +2369,13 @@ A consent refused by the policy of the client's level is an
 `oauth.consent.refused` with `validationLevel` and `reason`
 `client-not-validated`, `client-testers-only`, `client-scope-template`,
 `client-grant-limit` or `developer-clients-not-served`.
+
+The review acts over HTTP (§ 3d) are administration records: the method ids
+`system.oauthClients.approve | unvalidate | suspend | resume` and
+`system.publishers.set` in the core's platform trail, and the rows
+`oauth.client.reviewed` (the client owner's trail) and
+`oauth.publisher.reviewed` (the publisher's trail) when that account is on the
+core where the act ran. A CLI act is recorded in the row's `statusLog` only.
 
 `oauth.code.reused` in particular should page: per RFC 6749 a code is
 single-use, so a reuse means either a broken client or a stolen code.
