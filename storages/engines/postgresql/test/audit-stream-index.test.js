@@ -250,10 +250,15 @@ describe('[PGAS] PostgreSQL audit records indexed by access', function () {
   it('[PGAS6] records written during a fill end up indexed', async function () {
     const u = newUser();
     for (let i = 0; i < 400; i++) await put(u, 'w' + String(i).padStart(4, '0'), ['access-' + (i % 3), 'action-y'], 3000 + i);
-    await resetState();
+    // Left for the fill to index, which resumes just before this account: its
+    // small batches walk this test's records, not every record the shared test
+    // table holds (the rest is indexed already).
+    await db.query('DELETE FROM audit_event_streams WHERE user_id = $1', [u]);
+    await db.query('UPDATE audit_event_streams_state SET complete = false, cursor_user_id = $1, cursor_eventid = $2, updated_at = now()', [u, '']);
     const writer = userDb(u, false);
     const run = { stop: false };
     let written = 0;
+    let fill;
     const writes = (async () => {
       while (!run.stop) {
         await writer.createEvent({ id: 'live-' + written, streamIds: ['access-' + (written % 3), 'action-y'], type: 'audit-log/pryv-api', time: 5000 + written });
@@ -261,12 +266,13 @@ describe('[PGAS] PostgreSQL audit records indexed by access', function () {
       }
     })();
     try {
-      await ensureAuditStreamIndex(db, { batchRows: 40, afterBatch: () => new Promise((resolve) => setTimeout(resolve, 5)) });
+      fill = await ensureAuditStreamIndex(db, { batchRows: 40, afterBatch: () => new Promise((resolve) => setTimeout(resolve, 5)) });
     } finally {
       run.stop = true;
       await writes;
     }
     assert.ok(written > 0, 'writes ran during the fill');
+    assert.ok(fill.rows >= 400 && fill.batches >= 10, 'the fill walked this account\'s records: ' + JSON.stringify(fill));
     assert.strictEqual((await junction(u)).length, 400 + written);
     assert.deepStrictEqual(await drift(), { missing: 0, extra: 0 });
   });

@@ -140,6 +140,20 @@ class AuditStoragePG {
     await this.db.query('DELETE FROM audit_event_streams WHERE user_id = $1', [userId]);
   }
 
+  /**
+   * Tests only (refused outside `NODE_ENV=test`): remove every audit record,
+   * the platform trail's included. The cleanup at the end of a test run,
+   * which removes every account of the test database: without it their
+   * records outlive them and accumulate from run to run.
+   */
+  async deleteAllTestOnly (): Promise<void> {
+    if (process.env.NODE_ENV !== 'test') throw new Error('deleteAllTestOnly: test runs only (NODE_ENV=test)');
+    this.checkInitialized();
+    this.userDBsCache.clear();
+    await this.db.query('DELETE FROM audit_events');
+    await this.db.query('DELETE FROM audit_event_streams');
+  }
+
   close (): void {
     this.checkInitialized();
     this.userDBsCache.clear();

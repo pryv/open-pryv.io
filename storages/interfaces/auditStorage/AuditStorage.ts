@@ -56,6 +56,12 @@ export interface AuditStorage {
    * go to syslog only.
    */
   acceptsPlatformTrail?(): boolean;
+  /**
+   * Optional, tests only: remove every record, the platform trail's
+   * included, where the storage does not keep them in the users' directories
+   * (which the end of a test run removes).
+   */
+  deleteAllTestOnly?(): Promise<void>;
   close(): void;
 }
 
