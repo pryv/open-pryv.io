@@ -359,6 +359,46 @@ describe('[ADMR] role management', function () {
     assert.equal(rec.content.record.subject.via, 'setup');
   });
 
+  it('[ADMR10] a personal token without a role: refused session and claim requests stay out of the platform trail; past 10 refused session requests the account gets 429, an accepted one is never held back', async function () {
+    const user = await freshUser();
+    const ask = () => coreRequest.post('/system/admin/session').set('authorization', user.token).send({ username: user.username });
+    const since = nowSeconds();
+    for (let i = 0; i < sessions.SESSION_REFUSALS_MAX; i++) assert.equal((await ask()).status, 404, 'refusal ' + (i + 1));
+    const held = await ask();
+    assert.equal(held.status, 429, JSON.stringify(held.body));
+    assert.ok(Number(held.headers['retry-after']) > 0, 'Retry-After');
+    assert.equal((await coreRequest.post('/system/admin/roles/claim').set('authorization', user.token).send({ username: user.username, code: 'ZZZZZ-ZZZZZ-ZZZZZ-ZZZZZ-ZZZZZZ' })).status, 404);
+    // Granted meanwhile: the session opens, whatever the refusals before.
+    await roles.grantRole(db, user.userId, { role: 'viewer', scope: 'platform', grantedBy: 'test', via: 'grant', now: Date.now() });
+    assert.equal((await ask()).status, 201);
+    if (audit == null || auditStorage?.acceptsPlatformTrail?.() !== true) return;
+    const mine = (e) => e.content?.record?.subject?.userId === user.userId || e.content?.record?.target?.userId === user.userId;
+    const created = await platformTrail('system.adminSession.create', since, mine);
+    assert.equal(created.length, 1, 'only the accepted request is stored');
+    assert.ok(!String(created[0].type).includes('error'));
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const claims = (await (await auditStorage.forUser(require('storages/interfaces/auditStorage/AuditStorage.ts').PLATFORM_TRAIL_USER_ID))
+      .getEvents({ query: [{ type: 'streamsQuery', content: [[{ any: ['action-system.roles.claim'] }]] }] })).filter((e) => e.time >= since && mine(e));
+    assert.equal(claims.length, 0, 'a refused claim is syslog only by default');
+  });
+
+  it('[ADMR11] a revocation records its role and scope; one naming something that is not a role or a scope keeps neither in its record', async function () {
+    if (audit == null || auditStorage?.acceptsPlatformTrail?.() !== true) return this.skip();
+    const grantee = 'admr-n-' + cuid().slice(-8).toLowerCase();
+    await roles.grantRole(db, grantee, { role: 'viewer', scope: 'platform', grantedBy: 'test', via: 'grant', now: Date.now() });
+    let since = nowSeconds();
+    assert.equal((await coreRequest.delete('/system/admin/roles/' + grantee).query({ role: 'viewer', scope: 'platform' }).set(asKey())).status, 200);
+    let [rec] = await platformTrail('system.roles.delete', since, (e) => e.content?.record?.target?.userId === grantee);
+    assert.ok(rec != null, 'the revocation is recorded');
+    assert.deepEqual(rec.content.record.diff, { role: 'viewer', scope: 'platform' });
+    since = nowSeconds();
+    const junk = 'admrjunk'.repeat(40);
+    assert.equal((await coreRequest.delete('/system/admin/roles/' + grantee).query({ role: junk, scope: 'nowhere:' + junk }).set(asKey())).status, 404);
+    [rec] = await platformTrail('system.roles.delete', since, (e) => e.content?.record?.target?.userId === grantee && String(e.type).includes('error'));
+    assert.ok(rec != null, 'the refusal is recorded');
+    assert.ok(!JSON.stringify(rec.content.record).includes(junk), 'the junk is not in the record');
+  });
+
   it('[ADMR6] claim codes: any role at any scope of the grammar; the messages list the roles and the scope grammar', async () => {
     const minted = await coreRequest.post('/system/admin/claim-codes').set(asKey()).send({ role: 'app-reviewer', scope: 'region:eu' });
     assert.equal(minted.status, 201, JSON.stringify(minted.body));

@@ -99,6 +99,20 @@ export async function createAdminSession (db: AdminStore, opts: {
   return { token, expiresAt };
 }
 
+export const SESSION_REFUSALS_MAX = 10;
+export const SESSION_REFUSALS_WINDOW_MS = 15 * 60 * 1000;
+
+/**
+ * Count one refused administrator session request of an account (10 per 15
+ * min): past it the request answers 429. Accepted requests are not counted, so
+ * an administrator is never held back by this counter.
+ */
+export async function countSessionRefusal (db: AdminStore, opts: { userId: string; now: number }): Promise<{ allowed: true } | { allowed: false; retryAt: number }> {
+  const key = KEYS.sessionRefusalsPrefix + checkKeyId('user id', opts.userId);
+  const refusedUntil = await db.bumpWindowedCounter(key, SESSION_REFUSALS_MAX, SESSION_REFUSALS_WINDOW_MS, opts.now);
+  return refusedUntil == null ? { allowed: true } : { allowed: false, retryAt: refusedUntil };
+}
+
 /** How long the end marker of a session lives: past the longest session a renewal can make. */
 export const ENDED_SESSION_MARK_MS = (24 * 60 + 5) * 60 * 1000;
 

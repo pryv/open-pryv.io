@@ -154,6 +154,35 @@ describe('[BRSC] bin/breach-scope.js CLI', function () {
     assert.strictEqual(fs.statSync(mdOut).mode & 0o777, 0o600, 'a report file written over');
   });
 
+  it('[BRSC8] the report lists the administration acts on the account in the window, from the platform trail, never its name', async function () {
+    const app = globalThis.app;
+    if (!app.systemAPI.has('system.getUserInfo')) await require('api-server/src/methods/system.ts').default(app.systemAPI, app.api);
+    const storage = require('storages').auditStorage;
+    if (storage?.acceptsPlatformTrail?.() !== true) return this.skip();
+    const { PLATFORM_TRAIL_USER_ID } = require('storages/interfaces/auditStorage/AuditStorage.ts');
+    const since = Date.now() / 1000 - 1;
+    const read = await coreRequest.get('/system/user-info/' + username).set('authorization', config.get('auth:adminAccessKey'));
+    assert.strictEqual(read.status, 200, JSON.stringify(read.body));
+    // The record is written once the answer is sent.
+    const deadline = Date.now() + 5000;
+    for (;;) {
+      const rows = await (await storage.forUser(PLATFORM_TRAIL_USER_ID)).getEvents({ query: [{ type: 'streamsQuery', content: [[{ any: ['action-system.getUserInfo'] }]] }] });
+      if (rows.some((e) => e.time >= since) || Date.now() > deadline) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    const res = runCli(['--access', appAccessId, '--since', sinceIso, '--until', new Date(Date.now() + 60000).toISOString(), '--json']);
+    assert.strictEqual(res.status, 0, res.stderr);
+    const report = JSON.parse(res.stdout);
+    assert.strictEqual(report.platformTrail.available, true, JSON.stringify(report.platformTrail));
+    const act = report.platformTrail.records.find((r) => r.methodId === 'system.getUserInfo' && r.time >= since);
+    assert.ok(act != null, JSON.stringify(report.platformTrail));
+    assert.deepStrictEqual([act.outcome, act.subject.via], ['done', 'admin-key']);
+    assert.ok(!JSON.stringify(report.platformTrail).includes(username), 'no name in the section');
+    const md = runCli(['--access', appAccessId, '--since', sinceIso, '--until', new Date(Date.now() + 60000).toISOString()]);
+    assert.match(md.stdout, /Administration acts on the account/);
+    assert.match(md.stdout, /system\.getUserInfo/);
+  });
+
   it('[BRSC3] exits 3 when the accessId is not in the index', function () {
     const res = runCli(['--access', 'cnot-indexed-' + cuid(), '--since', sinceIso, '--json']);
     assert.strictEqual(res.status, 3, res.stderr);

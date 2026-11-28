@@ -363,9 +363,14 @@ class UserAuditDatabasePG {
     ) as AsyncIterable<AuditRow>;
   }
 
+  /**
+   * Import raw rows into THIS account's trail, whatever `user_id` a row
+   * carries: an exported row keeps the id of the account it was read from,
+   * and a crafted backup could name another account or the platform trail.
+   */
   async importAllEvents (events: AuditRow[]): Promise<void> {
     for (const event of events) {
-      const userId = event.user_id || this.userId;
+      const userId = this.userId;
       await this.db.query(
         `INSERT INTO audit_events (user_id, eventid, head_id, stream_ids, time, deleted, end_time, type, content, description, client_data, integrity, attachments, trashed, created, created_by, modified, modified_by)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)

@@ -51,6 +51,8 @@ function produceHandleErrorMiddleware (logging: { getLogger: (name: string) => L
       // An audit-store failure must not stop the error answer, nor reject
       // unhandled out of this async handler and take the worker down.
       try {
+        // An administration route's target may still be getting its account id.
+        await (req.context as { auditTargetPending?: Promise<void> }).auditTargetPending;
         if (isAuditActive) { await audit!.errorApiCall(req.context, error); }
       } catch (auditError) {
         logger.error('Failed to audit an API error', auditError);

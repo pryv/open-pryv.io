@@ -189,7 +189,27 @@ describe('[BKP-SHAPE-RESTORE] RestoreOrchestrator audit shape guard', function (
     const events = [{ id: 'a1' }, { id: 'a2' }];
     await o._restoreAudit('audit-user-id', events);
     assert.strictEqual(forUserCalledWith, 'audit-user-id', 'forUser must be called with the userId');
-    assert.strictEqual(importedWith, events, 'importAllEvents must receive the audit events after forUser is awaited');
+    assert.deepStrictEqual(importedWith, events, 'importAllEvents must receive the audit events after forUser is awaited');
+  });
+
+  // Mutation caught: rows imported with the `user_id` they carry (the platform
+  // trail's reserved id, or another account's, in a crafted backup).
+  it('[BKP-SHAPE-RESTORE-AUDIT-05] every row is imported under the restored account, whatever user id it names', async function () {
+    const { PLATFORM_TRAIL_USER_ID } = require('storages/interfaces/auditStorage/AuditStorage.ts');
+    let importedWith = null;
+    const o = makeRestoreWithAudit({ async forUser () { return { async importAllEvents (events) { importedWith = events; } }; } });
+    await o._restoreAudit('restored-id', [
+      { eventid: 'r1', user_id: PLATFORM_TRAIL_USER_ID },
+      { eventid: 'r2', user_id: 'another-account' },
+      { eventid: 'r3', user_id: 'restored-id' },
+      { eventid: 'r4' }
+    ]);
+    assert.deepStrictEqual(importedWith, [
+      { eventid: 'r1', user_id: 'restored-id' },
+      { eventid: 'r2', user_id: 'restored-id' },
+      { eventid: 'r3', user_id: 'restored-id' },
+      { eventid: 'r4' }
+    ]);
   });
 
   it('[BKP-SHAPE-RESTORE-AUDIT-02] calling importAllEvents on the unawaited forUser Promise is undefined (this is the bug shape)', function () {

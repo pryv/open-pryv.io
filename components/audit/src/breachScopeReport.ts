@@ -187,6 +187,18 @@ export interface BreachScopeReport {
   caveats: Array<{ code: string; text: string }>;
   auditFilterConfig: { storage: unknown; syslog: unknown };
   operatorNarrative: { likelyConsequences: string; measuresTakenOrProposed: string; contactPoint: string };
+  /**
+   * The administration acts on the account in the window, from the platform
+   * trail of the core the report was made on (set by the tool, not by `buildReport`).
+   */
+  platformTrail?: PlatformTrailSection;
+}
+
+export interface PlatformTrailSection {
+  available: boolean;
+  reason?: string;
+  truncated?: true;
+  records: Array<{ time: number; methodId: string | null; outcome: 'done' | 'refused'; subject: { via: string | null; userId: string | null; role: string | null; scope: string | null } }>;
 }
 
 /**
@@ -527,6 +539,27 @@ export function renderMarkdown (report: BreachScopeReport): string {
   }
   if (r.dataCategories.streamsTruncated) {
     L.push(`⚠ Some reads scoped more than the per-row id cap; the true category count reaches **${r.dataCategories.maxScopedStreamCount}** streams (id lists truncated, counts preserved).`);
+    L.push('');
+  }
+
+  // 6b administration acts on the account
+  if (r.platformTrail != null) {
+    const t = r.platformTrail;
+    L.push('## 6b. Administration acts on the account (platform trail of this core)');
+    L.push('');
+    if (!t.available) {
+      L.push(`Not read: ${t.reason ?? 'unavailable'}.`);
+    } else if (t.records.length === 0) {
+      L.push('No administration act on this account in the window.');
+    } else {
+      L.push('| time | act | outcome | by |');
+      L.push('| --- | --- | --- | --- |');
+      for (const a of t.records) {
+        const by = [a.subject.via, a.subject.userId, a.subject.role != null ? a.subject.role + '@' + a.subject.scope : null].filter((x) => x != null).join(' ');
+        L.push(`| ${isoOrNull(a.time)} | ${a.methodId ?? '?'} | ${a.outcome} | ${by} |`);
+      }
+      if (t.truncated) L.push('', '⚠ Too many records: the list stops at the read limit.');
+    }
     L.push('');
   }
 

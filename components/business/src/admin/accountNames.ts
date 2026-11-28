@@ -19,12 +19,18 @@ import { ledgerKey, usernameHash } from '../erasureLedger/index.ts';
 
 type ConfigReader = { get: (key: string) => unknown };
 
-/** Keys of a record part that hold a username or a part of one, and the key of their hash. */
+/** Keys of a record part that hold a username, and the key of their hash. */
 export const ACCOUNT_NAME_KEYS: Readonly<Record<string, string>> = Object.freeze({
   username: 'usernameHash',
-  delegateUsername: 'delegateUsernameHash',
-  search: 'searchHash'
+  delegateUsername: 'delegateUsernameHash'
 });
+
+/**
+ * Keys of a record part that hold a part of a username (a search prefix):
+ * recorded as `true` (a filter was used). The keyed hash of a few letters
+ * would say nothing useful and could be enumerated by whoever holds the key.
+ */
+export const ACCOUNT_NAME_PART_KEYS: readonly string[] = Object.freeze(['search']);
 
 /** The field naming the key of the hashes of a record part. */
 export const HASH_KEY_ID_FIELD = 'hashKeyId';
@@ -41,11 +47,18 @@ export function accountNameHash (name: string, config?: ConfigReader): { hash: s
 
 /**
  * A record part with every username replaced by its keyed hash, plus the
- * key's id (`hashKeyId`). Without a key, the name is left out.
+ * key's id (`hashKeyId`), and every part of a username by `true`. Without a
+ * key, the name is left out.
  */
 export function scrubAccountNames<T extends Record<string, unknown> | undefined> (part: T, config?: ConfigReader): T {
   if (part == null || typeof part !== 'object') return part;
   let out: Record<string, unknown> | null = null;
+  for (const key of ACCOUNT_NAME_PART_KEYS) {
+    if (!Object.hasOwn(part, key)) continue;
+    out ??= { ...part };
+    const value = out[key];
+    if (value != null && value !== '' && value !== true) out[key] = true;
+  }
   for (const [key, hashKey] of Object.entries(ACCOUNT_NAME_KEYS)) {
     if (!Object.hasOwn(part, key)) continue;
     out ??= { ...part };

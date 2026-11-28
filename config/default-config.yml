@@ -1362,8 +1362,10 @@ audit:
   # read with GET /system/admin/audit or `bin/admin.js audit tail`): which of
   # them are stored, among those `storage.filter` selects. "admin-acts" (the
   # default): the administration acts (`system.*` methods and routes, the
-  # acts of bin/admin.js, admin-key writes under /reg, an account erased with
-  # the admin key), not the refused setup-code tries nor refused deletions.
+  # acts of bin/admin.js, admin-key writes and reads of account data under
+  # /reg, an account erased with the admin key), not the refusals anyone can
+  # cause (setup-code tries, deletions, administrator session and claim-code
+  # requests with a personal token).
   # Public traffic without an account (auth.register, auth.emailChallenge,
   # oauth.*, sso.refused, mfa.recover, an account erased by its holder) stays
   # in syslog unless named here, e.g. include: ['admin-acts',

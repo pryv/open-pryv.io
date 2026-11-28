@@ -1146,7 +1146,10 @@ class RestoreOrchestrator {
     // was undefined, so the audit trail was silently dropped on restore.
     if (this.auditStorage == null || auditEvents.length === 0) return;
     const userAudit = await this.auditStorage.forUser(targetUserId);
-    await userAudit.importAllEvents(auditEvents);
+    // Every row goes to the restored account's trail: a row naming another
+    // account (or the platform trail, a crafted backup) is written under it.
+    const rows = auditEvents.map((row) => row != null && typeof row === 'object' && 'user_id' in row ? { ...row, user_id: targetUserId } : row);
+    await userAudit.importAllEvents(rows);
   }
 
   /**
