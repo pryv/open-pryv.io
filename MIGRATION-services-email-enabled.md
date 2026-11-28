@@ -96,12 +96,6 @@ services:
 | `accountDeletionScheduled` | `sendAccountDeletionScheduled` |
 | `accountDeletionReminder` | `sendAccountDeletionReminder` |
 | `accountDeletionBlocked` | `sendAccountDeletionBlocked` |
-| `accountTransferNamed` | `sendAccountTransferNamed` |
-| `accountTransferClaim` | `sendAccountTransferClaim` |
-| `accountTransferStarted` | `sendAccountTransferStarted` |
-| `accountTransferCancelled` | `sendAccountTransferCancelled` |
-| `accountTransferLapsed` | `sendAccountTransferLapsed` |
-| `accountTransferCompleted` | `sendAccountTransferCompleted` |
 
 ### Environment variables
 

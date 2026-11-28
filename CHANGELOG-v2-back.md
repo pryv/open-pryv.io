@@ -1,6 +1,6 @@
 # Changelog - Internal (no API impact)
 
-## Unreleased
+## 2.0.0-rc.92 - 2026-11-28
 
 ### Administration: places for the next features, trail follow-ups
 
@@ -704,32 +704,6 @@
   access logic after its write, like the other stream writes; marking a live stream deleted left it in the cached
   tree until the max age. Only reachable through `mall.streams.create` with a `deleted` timestamp (test fixtures).
   Test `[CDLB]`.
-
-### Password reset and notices: auto-deletion notices, transfer claim mails
-
-- `sendAutoDeletionMail`: the held-address check covers the stored-email branch only (`to == null`); a
-  refused notice keeps `ownerToldAt` unset (`tellOwnerStarted`, retried at each pass) and `logRefused` logs it once.
-- Checked, not guarded: the transfer claim mails go to the beneficiary's address.
-
-### Account transfer: the sweep, the record, the links
-
-- The auto-deletion sweep no longer skips `transfer` policies: when one is due it opens the claim
-  window instead of erasing (not counted in `maxDeletionsPerPass`); while a window is open a pass
-  completes the transfer once the claimant controls the account, cancels it on account use before a
-  claim (`inactivity`), lifts the failed-claim lock, re-sends the claim mail at +30 / +60 days, and
-  applies the fallback at its end (erasure trigger `transfer-fallback`). The life of a transfer is a
-  second key-value row next to the schedule (`TransferRecord`, key `transfer`), so a change of
-  schedule never loses it; a closed record is kept as the record.
-- The claim and decline links are derived (HMAC-SHA256 of kind, account id and a per-transfer salt
-  under a key derived from `account.autoDeletion.transfer.identitySecretsKey`, else from
-  `auth.adminAccessKey`, purpose `account-transfer-link-v1`); only the salt is stored, so a re-sent
-  link is the same and a database dump holds none. Rotating the source key invalidates the links in
-  flight.
-- The delegation methods register the owner's side of the handshake for the transfer
-  (`api-server/src/methods/helpers/transferDelegation.ts`: invite, state, withdraw); without
-  delegation on the core, transfers are not offered.
-- The shared ends of a transfer (completed, lapsed, cancelled / declined) live in
-  `business/src/autoDeletion/transferFlow.ts`, used by the sweep and by the claim / decline methods.
 
 ### Administration portal settings: internals
 

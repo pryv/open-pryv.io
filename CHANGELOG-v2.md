@@ -1,6 +1,6 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.92 - 2026-11-28
 
 ### Security: a restore writes a backup's audit records under the restored account
 
@@ -653,97 +653,6 @@ roll back or change a key.
   invalidation as an account deletion, for every account it wrote (kept or rolled back), and prints
   `Caches: the running core's workers were told ...`. When the pub/sub broker (`tcpBroker.port`) does not answer,
   or no core is connected to it, it prints a warning instead: if the core's API is running, restart it.
-
-### Account auto-deletion reset and erasure ledger: the account transfer parts
-
-With the account transfer (below), the administrator reset of 2.0.0-rc.90 also handles a transfer:
-
-- A transfer claim window not claimed yet is cancelled as a use of the account would (inactivity
-  schedules; the transfer stays armed unless the setting is removed), the beneficiary is told. A
-  pending claim invite is withdrawn first (on this core; the claimant's core is told best effort, an
-  unreachable one does not block the call). If this core could not remove it (a storage error), the
-  call answers `503 api-unavailable`, nothing changed, and can be repeated. Once the claimant
-  controls the account the transfer is done: completed, answered `409 auto-deletion-transfer-claimed`,
-  and recorded in the account's own trail.
-- The answer gains `transferCancelled`; the trail row records the transfer status before the call.
-- The sweep also reads the transfer record again before a claim window opens, ends or is cancelled:
-  a claim made meanwhile stops that account's pass.
-- The erasure ledger takes the `trigger` value `transfer-fallback` (the fallback deletion at the end
-  of a claim window). Nothing is written for an account transfer (it erases no account).
-
-### Account transfer to a beneficiary
-
-- **Account transfer to a beneficiary (`account.setAutoDeletion` with `action: 'transfer'`).** Instead
-  of being deleted at its date or after its period without use, an account can be handed over to a
-  beneficiary, who then becomes its controller (account delegation). The setting takes `transfer: {
-  email, name?, dateOfBirth?, notifyBeneficiary: 'atSetup' | 'atTrigger', fallback: 'delete' |
-  'keep' }` with `mode: 'date'` or `'inactivity'`; `fallback: 'delete'` is offered only where the
-  holder may delete the account themselves. Setting or changing a transfer (beneficiary, fallback,
-  notice, name or date of birth) needs the account password, like arming a schedule; moving from
-  `transfer` to `delete` counts as bringing the deletion nearer. Name and date of birth are optional,
-  stored encrypted in their own account field (never answered by the API: the setting shows
-  `identityGiven: true`), kept for the same beneficiary, and erased with every version when the
-  beneficiary changes, the action changes, the transfer completes, lapses or is declined, and with
-  the account. `getAutoDeletion` adds `transfer` (the state of the current or last transfer:
-  `status` `named | open | claimed | completed | declined | cancelled | lapsed | fallback-delete`,
-  `email`, `openedAt`, `endsAt`, `claimedBy`, `failedClaims`, `ownerNotifiedAt`, `closedAt`,
-  `closedReason`) and
-  `claimWindowDays`. With `notifyBeneficiary: 'atSetup'` the beneficiary is mailed at once, with a
-  decline link. When the schedule is due the account is not erased: a claim window opens
-  (`account.autoDeletion.transfer.claimWindowDays`, default 90), the beneficiary is mailed a claim
-  link (again 30 and 60 days later, the same link) and the holder is told. Use of the account before
-  a claim cancels the transfer in `inactivity` mode (the clock restarts), up to the moment the
-  fallback would apply; the holder can change or cancel it in the account app at any time (a new
-  date or period not yet due closes an open window). At the window end without a claim the holder's
-  `fallback` applies: `keep` lapses the transfer and leaves the setting at `never` (or the
-  platform's preset, with its full schedule, where opting out is not allowed); `delete` erases the
-  account as a direct deletion would (deletion guards, self-deletion, `maxDeletionsPerPass`).
-  `transfer` appears in `actions` and `features.autoDeletion.actions` where account delegation is
-  on, mail can be sent with the claim mail switched on (`atSetup` also needs the beneficiary-named
-  mail), and `service.account` is set (the claim and decline pages are pages of the
-  account app). The feature is now advertised when `transfer` alone is offered.
-- **New public methods `account.transferClaim` (`POST /{username}/account/auto-deletion/transfer-claim`,
-  `{ appId, token, claimant }`) and `account.transferDecline` (`POST
-  /{username}/account/auto-deletion/transfer-decline`, `{ appId, token }`).** The token of the mailed
-  link is the credential (trusted apps only, never inside a batch call). A claim binds the transfer to
-  the first account that claims it (`claimant`, on any core of the platform), sends that account a
-  delegation invite on the holder's behalf and answers `{ transfer: { status: 'invited', username }
-  }`; the claimant accepts it with `delegations.acceptAttach` on its own core, and the next claim
-  (or the sweep) completes the transfer: `{ status: 'completed' }`, the holder's setting cleared, the
-  identity erased, both parties mailed. A repeat by the same account answers the same; an invite that
-  lapsed inside the window is issued again; a claimant that already controls the account completes it
-  at once. Refusals: `auto-deletion-transfer-invalid-link` (unknown, replaced or closed: one answer),
-  `auto-deletion-transfer-expired` (window ended), `auto-deletion-transfer-claimed` (another account
-  claimed it). A valid link always proceeds; wrong ones are counted for the holder
-  (`transfer.failedClaims`) and refuse nothing else. Failed links also count on the caller's
-  address budget of failed secrets (`auth.passwordAttempts.perIp`, `too-many-attempts`). A decline
-  before the deadline turns the setting into the holder's fallback (`delete` on the same schedule, or
-  `never`); during the window, a claim made meanwhile included (its invite is withdrawn), it applies
-  the fallback at once (`keep`) or at the next pass (`delete`). A claimant who refuses the delegation
-  invite declines the same way; a decline after the claimant accepted is refused
-  (`auto-deletion-transfer-claimed`) and the transfer completes. A use of the account by its holder
-  (inactivity) also cancels a claim not accepted yet. The setting rejects an invalid transfer with `auto-deletion-transfer-invalid`
-  (`data.param`).
-- **Six new mails:** `account-transfer-named`, `-claim`, `-started`, `-cancelled`, `-lapsed`,
-  `-completed` (en, fr), switches `services.email.sendAccountTransfer{Named,Claim,Started,
-  Cancelled,Lapsed,Completed}` and template keys `accountTransfer…Template` (variables in
-  `default-config.yml`). The confirmation and reminder mails say "transferred to" for a transfer
-  (new variables `ACTION_TRANSFER`, `BENEFICIARY`, `FALLBACK_DELETE`, `FALLBACK_KEEP`, ...).
-  **Existing platforms:** the seeder fills an empty template store only: add the six templates (and
-  the updated `account-deletion-scheduled` and `account-deletion-reminder`) with `bin/mail.js
-  templates set`.
-- **With the held-address rule of 2.0.0-rc.72** (no notice to an address another account holds): the
-  owner of a transfer whose stored address another account holds is not marked told of its start (it
-  is tried again at each pass); mails to a transfer beneficiary are unchanged.
-- **A transfer that ended cannot be completed by accepting its old invite.** The owner's core
-  accepts a delegation invite sent for a transfer only while that transfer is still claimed by the
-  invited account, checked before the control access is created and again once the relationship is
-  active; otherwise the accept is refused (`410`) and the invite withdrawn: it leaves the owner's
-  delegate list, and the claimant's core drops it from the claimant's list. This covers a transfer
-  cancelled (the owner using the account again or changing the setting, an administrator's reset),
-  declined or lapsed while the claimant's invite could not be withdrawn. An accept interrupted
-  before it completed is checked the same way when it is repeated. Ordinary delegation invites are
-  not affected.
 
 ### Administration portal: public settings route, `portal` in service info
 
