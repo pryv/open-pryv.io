@@ -418,8 +418,14 @@ function getTokensAtRest (): unknown {
   return require('./tokensAtRest.ts');
 }
 
+/** The audit copies of the access hash removed (see `auditAccessIntegrityScrub.ts`); run when this engine holds the audit. */
+async function scrubAccessAuditIntegrity (options: { force?: boolean; auditStorage?: unknown } = {}): Promise<unknown> {
+  return await require('./auditAccessIntegrityScrub.ts').scrubAccessAuditIntegrity(options);
+}
+
 export {
   getTokensAtRest,
+  scrubAccessAuditIntegrity,
   init,
   initStorageLayer,
   getUserAccountStorage,

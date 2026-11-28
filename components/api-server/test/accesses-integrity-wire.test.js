@@ -178,7 +178,7 @@ describe('[AIWA] access integrity verifies on the wire form', function () {
     assert.equal(res.body.history[0].integrity, created.integrity, 'the original version matches the create-time record');
   });
 
-  it('[AIWN] accessDeletions: the entry keeps its integrity, verifiable once the token is restored', async function () {
+  it('[AIWN] accessDeletions: the entry carries no token and its integrity verifies on the entry as returned', async function () {
     const s = await newAccount();
     await update(s, s.sharedId, { name: 'Renamed' });
     const del = await coreRequest.delete(url(s, s.sharedId + ':1')).set('Authorization', s.personalToken);
@@ -188,8 +188,10 @@ describe('[AIWA] access integrity verifies on the wire form', function () {
     const entry = res.body.accessDeletions.find((d) => d.id === s.sharedId + ':1');
     assert.ok(entry?.integrity, 'the deletion entry carries integrity');
     assert.equal(entry.token, undefined, 'returned without its token');
-    assert.notEqual(stableRepresentation.access.hash(entry, integrity.algorithm), entry.integrity);
-    assertVerifies(Object.assign({}, entry, { token: s.sharedToken }), 'deletion entry with its token');
+    // the token is dropped at deletion and the integrity computed without it
+    assertVerifies(entry, 'deletion entry');
+    assert.notEqual(stableRepresentation.access.hash(Object.assign({}, entry, { token: s.sharedToken }), integrity.algorithm),
+      entry.integrity, 'the deleted token is no longer covered');
   });
 
   it('[AIWP] an update made by an updated app access verifies, with a composite modifiedBy', async function () {

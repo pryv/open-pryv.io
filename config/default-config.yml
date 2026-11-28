@@ -1358,6 +1358,24 @@ audit:
       methods:
         include: ['all']
         exclude: []
+  # The platform trail of this core (calls without an account of this core,
+  # read with GET /system/admin/audit or `bin/admin.js audit tail`): which of
+  # them are stored, among those `storage.filter` selects. "admin-acts" (the
+  # default): the administration acts (`system.*` methods and routes, the
+  # acts of bin/admin.js, admin-key writes under /reg, an account erased with
+  # the admin key), not the refused setup-code tries nor refused deletions.
+  # Public traffic without an account (auth.register, auth.emailChallenge,
+  # oauth.*, sso.refused, mfa.recover, an account erased by its holder) stays
+  # in syslog unless named here, e.g. include: ['admin-acts',
+  # 'auth.register'], or include: ['all'] for every call without an account.
+  # A stored record never holds a username or an error message in clear, but
+  # an opted-in public record keeps the caller's IP address.
+  # No retention yet: the trail grows with what it keeps.
+  platformTrail:
+    filter:
+      methods:
+        include: ['admin-acts']
+        exclude: []
 
   syslog:
     # Opt-in: containerized deploys typically have no syslog daemon listening

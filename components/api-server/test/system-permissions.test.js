@@ -12,12 +12,16 @@ const require = createRequire(import.meta.url);
  * [SYPM] the route table of /system (routes/system-permissions.ts): one entry
  * per Express route and no stale entry, the method ids it names, every gated
  * route refusing (404) a request without credential, the admin key unchanged
- * with `auth.adminAccessKeyScope: full`, and `break-glass`.
+ * with `auth.adminAccessKeyScope: full`, and `break-glass`; administrator
+ * sessions under scoped grants and this core's local policy.
  */
 
 const { withInjectedConfig } = require('test-helpers');
 const { SYSTEM_ROUTES, routeMatcher } = require('api-server/src/routes/system-permissions.ts');
-const { isPermission } = require('business/src/admin/permissions.ts');
+const { isPermission, PLATFORM_ONLY_WRITES } = require('business/src/admin/permissions.ts');
+const { grantRole, revokeRole } = require('business/src/admin/roles.ts');
+const { createAdminSession } = require('business/src/admin/sessions.ts');
+const { coreContext } = require('business/src/admin/scopes.ts');
 
 /* global initTests, initCore, coreRequest, getNewFixture, assert, cuid */
 
@@ -163,5 +167,60 @@ describe('[SYPM] /system route table and admin-key scope', function () {
     assert.notEqual((await coreRequest.get('/reg/admin/servers').set('authorization', adminKey)).status, 404, '/reg/admin/servers under full');
     const del = await coreRequest.delete('/users/' + username).set('authorization', adminKey);
     assert.equal(del.status, 200, 'account deletion under full: ' + JSON.stringify(del.body));
+  });
+
+  describe('administrator sessions: scopes and the local policy', function () {
+    const roleRows = [];
+    after(async function () {
+      for (const userId of roleRows) await revokeRole(platformDB(), userId, { now: Date.now(), force: true });
+    });
+    function platformDB () { return require('storages').platformDB; }
+    /** An administrator session whose role row holds `grants` ([role, scope]). No account is needed for the gate. */
+    async function sessionWith (grants) {
+      const userId = 'sypm' + cuid().toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 20);
+      roleRows.push(userId);
+      const now = Date.now();
+      for (const [role, scope] of grants) await grantRole(platformDB(), userId, { role, scope, grantedBy: 'admin-key', via: 'admin-key', now });
+      const { token } = await createAdminSession(platformDB(), { userId, homeCore: 'elsewhere', mfaAt: now, now: now + 1, ttlMs: 3600 * 1000 });
+      return { userId, authorization: 'AdminSession ' + token };
+    }
+    async function thisCoreId () { return coreContext(await require('@pryv/boiler').getConfig()).coreId; }
+
+    it('[SYPM6] an owner scoped to this core is refused (404) every platform-wide write route, reaches its core-local ones', async () => {
+      const { authorization } = await sessionWith([['owner', 'core:' + await thisCoreId()]]);
+      assert.equal((await coreRequest.get('/system/admin/users').set('authorization', authorization)).status, 200, 'control: users:read on this core');
+      assert.equal((await coreRequest.get('/system/admin/session').set('authorization', authorization)).status, 200, 'control: its session');
+      const platformWide = SYSTEM_ROUTES.filter((e) => e.rule.auth === 'admin' && e.rule.permission != null &&
+        PLATFORM_ONLY_WRITES.has(e.rule.permission) && (e.rule.accepts ?? ['key', 'session']).includes('session'));
+      assert.ok(platformWide.length >= 8, 'platform-wide write routes found: ' + platformWide.length);
+      for (const e of platformWide) {
+        let req = coreRequest[e.method.toLowerCase()](examplePath(e.path)).set('authorization', authorization);
+        if (e.method !== 'GET' && e.method !== 'DELETE') req = req.set('content-type', 'application/json').send({});
+        assert.equal((await req).status, 404, e.method + ' ' + e.path);
+      }
+      // The same role at another core's scope reaches nothing here.
+      const other = await sessionWith([['owner', 'core:another-core']]);
+      assert.equal((await coreRequest.get('/system/admin/users').set('authorization', other.authorization)).status, 404);
+      assert.equal((await coreRequest.get('/system/admin/session').set('authorization', other.authorization)).status, 200, 'its session still resolves');
+    });
+
+    it('[SYPM7] requireLocalScope refuses a platform owner, localGrants gives it back, on this core only', async () => {
+      const { userId, authorization } = await sessionWith([['owner', 'platform']]);
+      const users = async () => (await coreRequest.get('/system/admin/users').set('authorization', authorization)).status;
+      assert.equal(await users(), 200, 'default policy');
+      await withInjectedConfig({ admin: { localPolicy: { requireLocalScope: ['users:read'] } } }, async () => {
+        assert.equal(await users(), 404, 'required local scope');
+        const ctx = await coreRequest.get('/system/admin/portal/context').set('authorization', authorization);
+        assert.equal(ctx.status, 200, 'the session itself is not blocked');
+      });
+      await withInjectedConfig({ admin: { localPolicy: { requireLocalScope: ['users:read'], localGrants: [{ userId, role: 'support' }] } } }, async () => {
+        assert.equal(await users(), 200, 'given back by a local grant');
+      });
+      await withInjectedConfig({ admin: { localPolicy: { acceptReplicatedGrants: false } } }, async () => {
+        assert.equal(await users(), 404, 'replicated grants refused');
+        assert.equal((await coreRequest.get('/system/admin/users').set('authorization', adminKey)).status, 200, 'the admin key is not bound by the policy');
+      });
+      assert.equal(await users(), 200, 'default again');
+    });
   });
 });

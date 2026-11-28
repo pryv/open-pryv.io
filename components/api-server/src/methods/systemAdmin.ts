@@ -9,7 +9,7 @@ import * as nodePath from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ResultBag } from './_types.ts';
 import type { AdminSubject } from 'middleware/src/adminAuth.ts';
-import { auditAs, actorOf, auditAdminAct, wrap as wrapStep } from './helpers/adminAudit.ts';
+import { auditAs, actorOf, auditAdminAct, setAuditDetails, wrap as wrapStep } from './helpers/adminAudit.ts';
 import type { AdminStore } from 'business/src/admin/store.ts';
 import {
   readSetupState, redeemSetupCode, countSetupAttempt, pendingSetupCode, mintSetupCode, markReady
@@ -20,8 +20,10 @@ import {
 import type { LocalKv } from 'business/src/admin/sessions.ts';
 import {
   ROLE_OWNER, SCOPE_PLATFORM, isRole, isScope, grantRole, readRoleRow, listRoleRows, revokeRole, activeGrants,
-  permissionsOf, mintClaimCode, claimRole, countClaimAttempt, CLAIM_TTL_MAX_MS, LastOwnerError, lastingOwners
+  hasActiveGrant, effectivePermissions, mintClaimCode, claimRole, countClaimAttempt, CLAIM_TTL_MAX_MS, LastOwnerError, lastingOwners
 } from 'business/src/admin/roles.ts';
+import { coreContext } from 'business/src/admin/scopes.ts';
+import { roleMessage, scopeMessage, knownCoreIds, grantsView } from './systemAdminRoles.ts';
 import { setupCodeFileOf } from 'business/src/admin/setupBoot.ts';
 import type * as Migrations from 'storages/interfaces/migrations/index.ts';
 import { setDeletionGuard, setDeletionTeardownStep } from 'business/src/auth/deletionTeardown.ts';
@@ -29,7 +31,7 @@ import type { RoleRow } from 'business/src/admin/roles.ts';
 import { readAdminConfig, adminMfaRequired, portalUrl, portalSettings, setupPageUrl } from 'business/src/admin/config.ts';
 import { offeredCapabilities } from 'business/src/admin/capabilities.ts';
 import { lockdownView, withoutHiddenCapabilities } from 'business/src/admin/lockdown.ts';
-import { policyView } from 'business/src/admin/localPolicy.ts';
+import { policyView, readLocalPolicy } from 'business/src/admin/localPolicy.ts';
 import { setupChecks } from 'business/src/admin/setupChecks.ts';
 import { factory as errors } from 'errors';
 import { ready, getLogger } from '@pryv/boiler';
@@ -192,6 +194,7 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
       const personal = personalOf(context);
       const now = Date.now();
       if (adminMfaRequired(config) && await factorTimeOf(personal) == null) return mfaMissing();
+      setAuditDetails(context, { target: { userId: personal.userId }, diff: { role: ROLE_OWNER, scope: SCOPE_PLATFORM } });
       const row = await grantRole(store(), personal.userId, { role: ROLE_OWNER, scope: SCOPE_PLATFORM, grantedBy: 'setup', via: 'setup', now });
       result.role = rolePayload(personal.userId, row);
       await auditAdminAct(personal.userId, 'admin.role.created', { role: ROLE_OWNER, scope: SCOPE_PLATFORM, via: 'setup' });
@@ -238,8 +241,12 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
       }
       const now = Date.now();
       const role = await readRoleRow(db, personal.userId);
-      const permissions = permissionsOf(role, now);
-      if (role == null || permissions.size === 0) return errors.unknownResource();
+      // Any active grant opens a session, whatever it gives on this core (a
+      // grant scoped to another core, a local policy refusing it); the answer
+      // lists what it gives here and what it does not.
+      if (!hasActiveGrant(role, now)) return errors.unknownResource();
+      const { permissions, denied } = effectivePermissions(role, now,
+        { core: coreContext(config), policy: readLocalPolicy(config), userId: personal.userId });
       const factorAt = await factorTimeOf(personal);
       if (adminMfaRequired(config) && factorAt == null) return mfaMissing();
       const cfg = readAdminConfig(config);
@@ -251,7 +258,8 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
         homeCore: coreId(),
         mfaAt: factorAt,
         stepUpFresh: factorAt != null && isStepUpFresh({ mfaAt: factorAt }, now, cfg.session.stepUpMs),
-        permissions: [...permissions]
+        permissions: [...permissions],
+        denied
       };
       await auditAdminAct(personal.userId, 'admin.session.created', { homeCore: coreId() });
     }));
@@ -262,16 +270,21 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
       const subject = context.adminSubject!;
       const s = subject.session!;
       const now = Date.now();
-      result.adminSession = {
+      const adminSession: Record<string, unknown> = {
         userId: s.userId,
         homeCore: s.homeCore,
         mfaAt: s.mfaAt,
         createdAt: s.createdAt,
         expiresAt: s.expiresAt,
         stepUpFresh: isStepUpFresh(s, now, readAdminConfig(config).session.stepUpMs),
+        // On this core: what the grants give here, what they do not and why.
         permissions: [...subject.permissions],
-        grants: activeGrants(subject.role ?? null, now)
+        denied: subject.denied,
+        grants: grantsView(subject.role ?? null, now, config, await knownCoreIds())
       };
+      const localPolicy = policyView(config, subject);
+      if (localPolicy != null) adminSession.localPolicy = localPolicy;
+      result.adminSession = adminSession;
     }));
 
   systemAPI.register('system.adminSession.delete',
@@ -321,8 +334,8 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
       if (extra.length > 0) return errors.invalidParametersFormat('Unknown parameter(s): ' + extra.join(', ') + '.', { parameters: extra });
       const role = params.role ?? ROLE_OWNER;
       const scope = params.scope ?? SCOPE_PLATFORM;
-      if (!isRole(role)) return errors.invalidParametersFormat('`role` must be one of: owner.', { role });
-      if (!isScope(scope)) return errors.invalidParametersFormat('`scope` must be one of: platform.', { scope });
+      if (!isRole(role)) return errors.invalidParametersFormat(roleMessage('role'), { role });
+      if (!isScope(scope)) return errors.invalidParametersFormat(scopeMessage('scope'), { scope });
       let ttlMs: number | undefined;
       if (params.ttlMinutes != null) {
         const minutes = params.ttlMinutes;
@@ -332,6 +345,8 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
         ttlMs = minutes * 60000;
       }
       const subject = context.adminSubject;
+      // The role and scope the code gives, never the code.
+      setAuditDetails(context, { diff: { role, scope, ttlMinutes: (params.ttlMinutes as number | undefined) ?? null } });
       const minted = await mintClaimCode(store(), { role, scope, mintedBy: actorOf(subject), now: Date.now(), ttlMs });
       result.claimCode = { code: minted.display, role, scope, expiresAt: minted.expiresAt };
       await auditAdminAct(subject?.userId, 'admin.claimCode.created', { role, scope });
@@ -350,6 +365,7 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
       if (adminMfaRequired(config) && await factorTimeOf(personal) == null) return mfaMissing();
       const claimed = await claimRole(db, params.code, { userId: personal.userId, now });
       if (claimed == null) return errors.unknownResource('administrator code');
+      setAuditDetails(context, { target: { userId: personal.userId }, diff: { role: claimed.grant.role, scope: claimed.grant.scope, mintedBy: claimed.grant.mintedBy } });
       result.role = rolePayload(personal.userId, claimed.row);
       await auditAdminAct(personal.userId, 'admin.role.claimed', { role: claimed.grant.role, scope: claimed.grant.scope, mintedBy: claimed.grant.mintedBy });
     }));
@@ -358,10 +374,13 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
     auditAs('subject'),
     wrap(async (_context, _params, result) => {
       const roles = [];
+      const now = Date.now();
+      const coreIds = await knownCoreIds();
       for (const { userId, row } of await listRoleRows(store())) {
         let username: string | null = null;
         try { username = (await usersRepository.getUsernameForUserId(userId)) ?? null; } catch { /* not of this core */ }
-        roles.push({ ...rolePayload(userId, row), username, sessionsRevokedAt: row.sessionsRevokedAt ?? null });
+        // Each grant says whether its scope names something the platform knows (`orphan`: it gives nothing).
+        roles.push({ ...rolePayload(userId, row), grants: grantsView(row, now, config, coreIds), username, sessionsRevokedAt: row.sessionsRevokedAt ?? null });
       }
       result.roles = roles;
     }));
@@ -375,6 +394,7 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
       if (typeof userId !== 'string' || !/^[A-Za-z0-9._-]{1,128}$/.test(userId)) return errors.unknownResource('role');
       if (role != null && typeof role !== 'string') return errors.invalidParametersFormat('`role` must be a string.');
       if (scope != null && typeof scope !== 'string') return errors.invalidParametersFormat('`scope` must be a string.');
+      setAuditDetails(context, { target: { userId }, diff: { role: role ?? null, scope: scope ?? null } });
       let revoked: boolean;
       try {
         revoked = await revokeRole(store(), userId, { role: role as string | undefined, scope: scope as string | undefined, now: Date.now() });
@@ -385,6 +405,7 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
       if (!revoked) return errors.unknownResource('role', userId);
       result.revoked = true;
       await auditAdminAct(context.adminSubject?.userId, 'admin.role.deleted', { target: userId, role: role ?? null, scope: scope ?? null });
+      await auditAdminAct(userId, 'admin.role.revoked', { role: role ?? null, scope: scope ?? null, revokedBy: actorOf(context.adminSubject) });
     }));
 
   // ------------------------------------------------------------ portal
@@ -406,7 +427,7 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
         // Same form as system.listCores (trailing slash), so the portal matches the two.
         core: { id: coreId(), url: platform.coreIdToUrl(coreId()) },
         setup: { state: state?.state === 'pending' ? 'pending' : 'ready' },
-        subject: { kind: subject.kind, userId: subject.userId ?? null, permissions: [...subject.permissions] },
+        subject: { kind: subject.kind, userId: subject.userId ?? null, permissions: [...subject.permissions], denied: subject.denied ?? [] },
         capabilities: withoutHiddenCapabilities(config, offeredCapabilities(config)),
         portal: { url: portalUrl(config), setupPageUrl: setupPageUrl(config) },
         adminSession: { ttlMinutes: cfg.session.ttlMs / 60000, stepUpMinutes: cfg.session.stepUpMs / 60000, mfaRequired: adminMfaRequired(config) }

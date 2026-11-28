@@ -594,6 +594,19 @@ try {
   warnings.push(`the setup and administration keys could not be checked here (${err.message}); boot still checks them.`);
 }
 
+// audit.platformTrail.filter: the shape boot refuses, and names that select nothing.
+try {
+  const { checkPlatformTrailFilter } = require('../config/plugins/config-validation.js');
+  const found = [];
+  checkPlatformTrailFilter(configReader, found);
+  for (const p of found) problems.push(p.message);
+  const { unknownFilterMethods } = require('../components/audit/src/validation.ts');
+  const unknown = unknownFilterMethods(configReader.get('audit:platformTrail:filter'));
+  if (unknown.length > 0) warnings.push("'audit.platformTrail.filter' names methods that do not exist: " + unknown.map((m) => JSON.stringify(m)).join(', ') + '. They select nothing.');
+} catch (err) {
+  warnings.push(`audit.platformTrail.filter could not be checked here (${err.message}); boot still checks it.`);
+}
+
 // adapterRoutes: shape only (the `adapter` account check needs the database;
 // master.js runs it at boot).
 try {

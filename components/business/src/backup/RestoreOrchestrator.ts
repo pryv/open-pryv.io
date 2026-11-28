@@ -31,10 +31,13 @@ const { deletedUserMessage } = require('storages/interfaces/backup/chain.ts');
 // this server issues: accounts migrated or created by older versions restore
 // too, and the per-user paths are checked to stay inside their base anyway.
 const SAFE_SEGMENT_RE = /^[A-Za-z0-9_-]{3,64}$/;
+// The audit storage's id of this core's platform trail is never an account:
+// restored under it, an account would read and own that trail.
+const { PLATFORM_TRAIL_USER_ID } = require('storages/interfaces/auditStorage/AuditStorage.ts') as { PLATFORM_TRAIL_USER_ID: string };
 
 function isRestorableUser (entry: { userId?: unknown; username?: unknown } | null | undefined): boolean {
   return entry != null &&
-    typeof entry.userId === 'string' && SAFE_SEGMENT_RE.test(entry.userId) &&
+    typeof entry.userId === 'string' && SAFE_SEGMENT_RE.test(entry.userId) && entry.userId !== PLATFORM_TRAIL_USER_ID &&
     typeof entry.username === 'string' && SAFE_SEGMENT_RE.test(entry.username);
 }
 

@@ -16,7 +16,9 @@ const require = createRequire(import.meta.url);
  * @param {Function} cleanupFn - async function called after tests for cleanup (receives userId)
  * @param {Object} [engineHooks] - engine test hooks, all optional:
  *   `setSummaryChunkRows(rows)` sets the window size of a windowed `summarize`
- *   and returns the previous one
+ *   and returns the previous one;
+ *   `removePlatformTrailRows(storage, eventIds)` removes the platform-trail
+ *   rows the tests wrote (the storage refuses to delete the trail itself)
  */
 export default function conformanceTests (getStorage, getUserId, cleanupFn, engineHooks = {}) {
   const assert = require('node:assert');
@@ -452,6 +454,108 @@ export default function conformanceTests (getStorage, getUserId, cleanupFn, engi
               (err) => err.code === SUMMARY_BUDGET_ERROR_CODE);
           }
           assert.deepStrictEqual(await summary(dbA, { deadline: Date.now() + 60_000 }), ALL_A);
+        });
+      });
+
+      describe('platform trail (when acceptsPlatformTrail())', () => {
+        const { PLATFORM_TRAIL_USER_ID } = require('../AuditStorage.ts');
+        const written = [];
+        let n = 0;
+
+        function trailEvent () {
+          const id = 'sqpt-' + Date.now().toString(36) + '-' + (++n);
+          written.push(id);
+          return { id, streamIds: ['action-system.createUser', 'access-admin'], type: 'audit-log/pryv-api', time: 5000 + n, created: 5000, createdBy: 'system', modified: 5000, modifiedBy: 'system', content: { action: 'system.createUser', record: { subject: { via: 'admin-key' } } } };
+        }
+
+        before(function () {
+          if (typeof storage.acceptsPlatformTrail !== 'function' || storage.acceptsPlatformTrail() !== true) return this.skip();
+        });
+
+        after(async () => {
+          if (typeof storage.refuseUnindexedUsers === 'function') storage.refuseUnindexedUsers(false);
+          if (written.length > 0 && typeof engineHooks.removePlatformTrailRows === 'function') await engineHooks.removePlatformTrailRows(storage, written);
+        });
+
+        // audit.onUserDelete `erase` (refuse) and `keep` (accept): the trail is written and read back in both.
+        for (const refuse of [true, false]) {
+          it(`[SQPT1] writes and reads back the trail with records of unindexed ids ${refuse ? 'refused' : 'accepted'}`, async () => {
+            if (typeof storage.refuseUnindexedUsers === 'function') storage.refuseUnindexedUsers(refuse);
+            const trail = await storage.forUser(PLATFORM_TRAIL_USER_ID);
+            const event = trailEvent();
+            await trail.createEvent(event);
+            const back = await trail.getOneEvent(event.id);
+            assert.ok(back != null, 'read back');
+            assert.deepStrictEqual(back.content, event.content);
+            const listed = await trail.getEvents({ query: [{ type: 'streamsQuery', content: [[{ any: ['action-system.createUser'] }]] }] });
+            assert.ok(listed.some((e) => e.id === event.id), 'listed by its action stream');
+          });
+        }
+
+        it('[SQPT2] refuses to delete the trail as an account, and keeps it', async () => {
+          const trail = await storage.forUser(PLATFORM_TRAIL_USER_ID);
+          const event = trailEvent();
+          await trail.createEvent(event);
+          await assert.rejects(storage.deleteUser(PLATFORM_TRAIL_USER_ID), (err) => err.code === 'PLATFORM_TRAIL_NOT_AN_ACCOUNT');
+          assert.ok(await (await storage.forUser(PLATFORM_TRAIL_USER_ID)).getOneEvent(event.id) != null, 'still there');
+        });
+
+        it('[SQPT3] where unindexed ids are refused, an ordinary unknown id (also one close to the reserved one) is still refused', async function () {
+          if (typeof storage.refuseUnindexedUsers !== 'function' || storage.refuseUnindexedUsers(true) !== true) return this.skip();
+          try {
+            for (const other of [getUserId() + '-sqpt', PLATFORM_TRAIL_USER_ID + '-x', 'x' + PLATFORM_TRAIL_USER_ID, PLATFORM_TRAIL_USER_ID.toUpperCase(), PLATFORM_TRAIL_USER_ID + ' ']) {
+              await assert.rejects((await storage.forUser(other)).createEvent(trailEvent()), JSON.stringify(other));
+            }
+          } finally {
+            storage.refuseUnindexedUsers(false);
+          }
+        });
+      });
+
+      // The default audit read of an app token: its own access among the
+      // records of many. Ids follow the insertion order, so the tie order of
+      // both engines (time then eventid, time then insertion) is the same.
+      describe('getEvents() of one access among many records', () => {
+        let ownUserId;
+        let ownDb;
+        const pad = (i) => String(i).padStart(3, '0');
+
+        before(async () => {
+          ownUserId = getUserId() + '-one-access';
+          ownDb = await storage.forUser(ownUserId);
+          for (let i = 0; i < 60; i++) {
+            await ownDb.createEvent({
+              id: 'oa-' + pad(i),
+              streamIds: i % 3 === 0 ? ['access-mine', 'action-events.get'] : ['access-other-' + (i % 5), 'action-events.get'],
+              type: 'audit-log/pryv-api',
+              time: 7000 + Math.floor(i / 6),
+              created: 7000,
+              createdBy: 'test',
+              modified: 7000,
+              modifiedBy: 'test'
+            });
+          }
+        });
+
+        after(async () => {
+          if (cleanupFn) await cleanupFn(ownUserId);
+        });
+
+        it('[ASQC] must page the access\'s records by time, ties included, in both directions', async () => {
+          const mine = [];
+          for (let i = 0; i < 60; i += 3) mine.push('oa-' + pad(i));
+          const query = () => [
+            { type: 'equal', content: { field: 'trashed', value: false } },
+            { type: 'streamsQuery', content: [[{ any: ['access-mine'] }]] }
+          ];
+          for (const [time, expected] of [[-1, [...mine].reverse()], [1, mine]]) {
+            for (const skip of [0, 3, 6, 18]) {
+              const page = await ownDb.getEvents({ query: query(), options: { sort: { time }, limit: 3, skip } });
+              assert.deepStrictEqual(page.map((e) => e.id), expected.slice(skip, skip + 3), `time ${time} skip ${skip}`);
+            }
+          }
+          const accesses = (await ownDb.getAllAccesses()).map((r) => r.term).sort();
+          assert.deepStrictEqual(accesses, ['access-mine', 'access-other-1', 'access-other-2', 'access-other-3', 'access-other-4', 'access-other-0'].sort());
         });
       });
 

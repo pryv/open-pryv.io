@@ -243,6 +243,25 @@ function checkReturnOrigins (config, problems) {
 // so future enum-style gates land in the same shape.
 const AUDIT_ON_USER_DELETE_MODES = ['erase', 'keep', 'pseudonymise'];
 
+/**
+ * `audit.platformTrail.filter` (which calls without an account the platform
+ * trail keeps; default: the administration acts) has the shape of the other
+ * audit filters.
+ */
+function checkPlatformTrailFilter (config, problems) {
+  const value = config.get('audit:platformTrail:filter');
+  if (value == null) return;
+  try {
+    require('../../components/audit/src/validation.ts').filter(value);
+  } catch (err) {
+    problems.push({
+      message: "'audit:platformTrail:filter' must be { methods: { include: [...], exclude: [...] } } of method ids, groups such as \"system.all\", \"admin-acts\" or \"all\": " + String(err.message).split('\n')[0],
+      path: ['audit', 'platformTrail', 'filter'],
+      payload: { value }
+    });
+  }
+}
+
 function checkAuditOnUserDeleteMode (config, problems) {
   const value = config.get('audit:onUserDelete');
   if (value == null) return; // default 'erase' wired in default-config.yml — absence here means override removed it, treat as 'erase'
@@ -773,6 +792,7 @@ async function validate (config) {
   checkTrustedApps(config, problems);
   checkReturnOrigins(config, problems);
   checkAuditOnUserDeleteMode(config, problems);
+  checkPlatformTrailFilter(config, problems);
   checkDnsTopologyConsistency(config, problems);
   checkDnsLessExplicit(config, problems);
   checkPlatformEngineTopology(config, problems);
@@ -993,11 +1013,11 @@ function auditEngineWarnings (config) {
 function auditFilterWarnings (config) {
   if (config.get('audit:active') === false) return [];
   const { unknownFilterMethods } = require('../../components/audit/src/validation.ts');
-  return ['storage', 'syslog'].flatMap((target) => {
+  return ['storage', 'syslog', 'platformTrail'].flatMap((target) => {
     const unknown = unknownFilterMethods(config.get('audit:' + target + ':filter'));
     if (unknown.length === 0) return [];
     return ["'audit." + target + ".filter' names methods that do not exist: " + unknown.map((m) => JSON.stringify(m)).join(', ') +
-      '. They select nothing. Use a method id (as in the API reference), a group such as "events.all", or "all".'];
+      '. They select nothing. Use a method id (as in the API reference), a group such as "events.all" or "admin-acts", or "all".'];
   });
 }
 
@@ -1123,6 +1143,7 @@ module.exports = {
   checkTrustedApps,
   checkReturnOrigins,
   checkAuditOnUserDeleteMode,
+  checkPlatformTrailFilter,
   checkDnsTopologyConsistency,
   checkDnsLessExplicit,
   checkPlatformEngineTopology,

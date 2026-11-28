@@ -56,6 +56,321 @@
   `gitops`, `behind-cloudflare`, `air-gap`). Lockdown is per core: under GitOps, put the block on every core.
 - A core whose lockdown differs from another registered core's logs `[admin-lockdown-drift]` at start.
 
+### Administrators: six roles, grant scopes, a per-core local policy, role management, the platform trail
+
+- **Roles.** `operator`, `support`, `auditor`, `app-reviewer` and `viewer` join `owner`. Each is a fixed bundle of
+  the existing permission names (no new name); `owner` holds them all, and only `owner` holds `roles:grant`,
+  `claimCodes:mint`, `setup:write`, `delegation:write` and `bootstrap:issue`. An unknown role in a role row gives
+  nothing.
+- **Scopes.** A grant's scope is `platform`, `region:<id>`, `zone:<id>`, `hosting:<id>` or `core:<id>` (an id is 1 to
+  128 of `A-Z a-z 0-9 . _ -`), matched against this core's place in the `hostings` hierarchy (`core.hosting`,
+  `default` when unset). An id the hierarchy or the core list does not know never matches (an **orphan** grant gives
+  nothing); without a `hostings` hierarchy only `platform`, `hosting:default` and `core:<id>` can match.
+  **Platform-wide writes** (`roles:grant`, `claimCodes:mint`, `setup:write`, `config:write`, `dns:write`,
+  `mail:write`, `observability:write`, `extId:write`, `cores:write`, `bootstrap:issue`, `delegation:write`) are given
+  only by grants at scope `platform`: only a platform owner manages roles and mints claim codes. OAuth client and
+  publisher permissions come from `platform` and `region:<r>` grants only. Every other permission comes from a grant
+  whose scope covers the core serving the call.
+- **Local policy** (`admin.localPolicy`, per-core YAML, never in the platform store):
+  `acceptReplicatedGrants` (default true; false: the platform store's grants give nothing on this core),
+  `requireLocalScope` (permission names that only this core's local grants give, whatever a replicated grant's
+  scope), `localGrants` (`[{ userId, role }]`: the role on this core only, minus the platform-wide writes and the
+  OAuth client and publisher permissions). A local grant counts only for an account that holds an active grant in
+  the platform store (its session and its revocation live there). The policy binds administrator sessions, never
+  the admin key nor a setup session. The master logs the effective policy at boot; boot and
+  `bin/check-config.js` refuse an invalid one. Cores holding different policies is expected.
+- **Administrator sessions.** `POST /system/admin/session` opens for any account holding an active grant, even one
+  that gives no permission on this core (a grant scoped to another core, a local policy refusing it): before, an
+  account with no permission on its home core could not sign in. Its answer, `GET /system/admin/session` and the
+  portal context's `subject` add **`denied: [{ permission, reason: 'scope' | 'local-policy' }]`**, the permissions of
+  the account's roles not held on this core; the session read also gives this core's `localPolicy` when it is not
+  the default (with the roles it grants the caller locally, never other accounts'). Revoking a grant takes effect at
+  the next request on every core.
+- **Role management.**
+  - New `PUT /system/admin/roles/:userId` `{ role, scope, expiresAt? }` (`system.roles.set`): grants a role at a
+    scope, or replaces the grant of that role and scope. `expiresAt` is in milliseconds since the epoch, in the
+    future. Needs `roles:grant` with a recent second factor (admin key or session; not under `break-glass`).
+    Replacing the last lasting owner grant with an expiring one answers 400 `last-owner`, as the revocation does.
+  - New `GET /system/admin/roles/:userId` (`system.roles.get`, `roles:read`, break-glass) and
+    `GET /system/admin/roles/by-username/:username` (`system.roles.getByUsername`, `roles:read`): the latter answers
+    on the account's home core only (elsewhere a 400 naming the home core's URL) and is how a username becomes the
+    account id a grant needs (role rows never hold a username).
+  - Every grant in the role list, the one-account reads and the session read carries **`scopeState`**: `ok`, or
+    `orphan`.
+  - `POST /system/admin/claim-codes` accepts the six roles and every scope of the grammar; its messages list them.
+- **Platform trail.** Each core now stores the audit records of its administration acts (the audited calls
+  without an account of this core whose method id starts with `system.`: account, core and status methods of
+  `/system`, setup, sessions, roles, claim codes) in its audit storage, under the reserved id `platform-trail`. Each
+  record names who acted: `content.record.subject` = `{ via: 'admin-key' | 'session' | 'setup', userId?, sessionId?
+  (16 characters), role?, scope?, localGrant? }`, where `role` and `scope` are the grant that gave the route's
+  permission on this core; and on what: `target`, `diff` (names and digests only: never a body, an address, a token
+  or a secret value; a mail template body is recorded by length and SHA-256), `result`. A refused act keeps its
+  subject and target.
+  - **No username in clear:** an account is named by its id (when it is an account of this core) and
+    `usernameHash`, the keyed hash of its username under the erasure ledger's key
+    (`accountErasure.ledger.hmacKey`, else derived from `auth.adminAccessKey`; without either key, the id only),
+    in `target`, `diff` and the recorded query (`search` of the users list becomes `searchHash`). The trail
+    outlives the accounts it names and is outside their erasure.
+  - **Which calls it keeps:** new key **`audit.platformTrail.filter`** (`methods.include` / `methods.exclude`, the
+    semantics of the other audit filters, applied together with `audit.storage.filter`). Default
+    `include: ['admin-acts']`: the administration acts, without the refused setup-code tries
+    (`system.setup.createSession` refusals). Public traffic without an account (`auth.register`,
+    `auth.emailChallenge*`, `oauth.*` events without a user, `sso.refused`, `mfa.recover`) stays in syslog only
+    unless named there (e.g. `include: ['admin-acts', 'auth.register']`, or `['all']` for every call without an
+    account; naming `system.setup.createSession` keeps its refusals). A refused `POST /system/admin/cores/ack`
+    (anyone can call it) is logged, never stored. Boot and `bin/check-config.js` refuse a malformed filter and warn
+    about names that select nothing.
+  - **Attribution fix:** calls of the `/system` account, core and status methods made with an administrator session
+    are recorded under `admin-session` with the account (they were all recorded under `admin`).
+  - The `/system` routes served without an API method (certificates, mail templates, users validate / update /
+    delete, delegation invite / create-account, cores ack) now have method ids (`system.certs.list`,
+    `system.certs.renew`, `system.mailTemplates.list|get|set|delete`, `system.mail.sendTest`,
+    `system.users.validate`, `system.users.update`, `system.users.delete`, `system.delegation.invite`,
+    `system.delegation.createAccount`, `system.cores.ack`) and record their acts, done or refused (the reads among
+    them are not audited).
+  - `system.getUserInfo` and `system.getAccess` are now audited, in the platform trail and in the read account's own
+    trail when it is on this core (`account.readByAdmin`). An act of an administrator session is also recorded in
+    the administrator's own trail (`admin.act`) when its account is on this core; a grant or a revocation in the
+    grantee's (`admin.role.granted`, `admin.role.revoked`).
+  - New **`GET /system/admin/audit`** (`system.audit.get`, `audit:read`, not break-glass, not itself audited):
+    `fromTime`, `toTime` (seconds), `methodId`, `subject` (an account id, `admin-key` or `setup`), `target` (a value
+    the act names: an account id, a username hash, a namespace...),
+    `limit` (default 100, at most 1000), `skip` (at most 10000: read further by narrowing `toTime`); most recent
+    first; `skip` and `limit` count matching records, and `hasMore` says whether more may follow (with a `subject`
+    or `target` filter at most 20000 records are read per page: `scanLimitReached: true` then). Each core answers
+    for its own trail (no aggregation across cores). It answers 503 when audit is off or the audit storage does not
+    keep the trail.
+  - Grants, revocations, claim codes (role, scope and lifetime, never the code), claims and the first
+    administrator name the account and the role and scope in their platform-trail record, also when the act is
+    refused.
+  - An account erased with the admin key (`DELETE /users/:username`, `auth.delete`) is an administration act: kept
+    by default (`admin-acts`), done calls only, with `subject: { via: 'admin-key' }` and `target: { userId,
+    usernameHash }`. A deletion by the account's holder, and a refused deletion, stay in syslog unless
+    `audit.platformTrail.filter` names `auth.delete`.
+  - The acts of `bin/admin.js` (`roles grant` / `revoke`, `sessions revoke`, `claim-code`, `setup-code --new`,
+    `setup finish`) are recorded in the platform trail too (ids `admin.cli.role.granted`, `admin.cli.role.deleted`,
+    `admin.cli.sessions.revoked`, `admin.cli.claimCode.created`, `admin.cli.setupCode.replaced`,
+    `admin.cli.setup.finished`), with `subject: { via: 'cli', osUser }`, the account by id and the role and scope;
+    never a code. `GET /system/admin/audit` takes `subject=cli`.
+  - The admin-key writes under `/reg` are recorded as administration acts, done or refused:
+    `GET /reg/admin/servers/:src/rename/:dst` (`system.reg.servers.rename`: both core ids, the number of accounts
+    and external ids moved), `GET /reg/admin/invitations/post` (`system.reg.invitations.create`: how many, never a
+    token nor the description), `POST /reg/records` and `DELETE /reg/records/:subdomain` (`system.reg.records.set` /
+    `.delete`: the name and the kinds of record, not their values).
+  - **Whatever selected a record** (including public ids opted in through `audit.platformTrail.filter`), the stored
+    copy holds no username and no error message in clear: `content.message` is dropped (it may quote the input, a
+    username or an email; `content.id` says what was refused; the `HTTP <status>` of a refused handler route is
+    kept), and usernames in `content.query`, the record's `target` and `diff` and the delegation stamp become their
+    keyed hash. Syslog keeps the record as before. An opted-in public record keeps the caller's IP address.
+  - Next to each keyed hash, a record part holds **`hashKeyId`**, the id of the key that made it (the erasure
+    ledger's `keyId`): records made before and after a key change (an explicit `accountErasure.ledger.hmacKey` set,
+    or the admin key rotated without one) are told apart. Set `accountErasure.ledger.hmacKey` explicitly to keep the
+    hashes stable across an admin key rotation.
+  - A filtered read of `GET /system/admin/audit` stopped by the scan limit (`scanLimitReached: true`) also answers
+    **`scannedToTime`**, the time of the last record scanned: continue with `toTime` = that value and `skip: 0`.
+    `toTime` is inclusive, so records sharing that time come again: drop by `id` those already read.
+  - **Upgrade note:** the administration acts, which reached syslog only, are now also stored: audit storage grows
+    with administration traffic (public traffic is not stored unless `audit.platformTrail.filter` names it). There
+    is no retention of the platform trail in this release (as for every audit trail). The platform trail is not part of an account
+    backup, and a restore refuses `platform-trail` as an account id (in the backup or as the id an account is remapped to).
+- **`GET /system/admin/users`** takes optional `limit`, `skip` and `search` (a username prefix) and answers `total`;
+  without them the answer is unchanged.
+- **Security:** an administrator session may now hold its permission through a grant covering this core only, so
+  the account routes no longer act beyond this core for a session: `PUT /system/users` answers 404 for a username
+  with no account on this core, `POST /system/users/validate` refuses a `core` other than this one before anything
+  is reserved, and `GET /system/accesses/:accessId` on a multi-core platform answers 404 for an access of another
+  core's account. The admin key keeps the platform-wide behaviour.
+- **Fixed:** `audit.storage.filter` and `audit.syslog.filter` with `include: ['all']` and a non-empty `exclude`
+  selected nothing (`all` was read as a method id): an operator excluding a few methods lost the whole audit, in
+  syslog and in storage. They now select every audited method but the excluded ones.
+- **Upgrade note (`hostings`):** boot and `bin/check-config.js` now refuse a `hostings` hierarchy in which a zone key
+  appears in two regions or a hosting key in two zones (a `zone:` or `hosting:` scope would be ambiguous): rename
+  the duplicate before upgrading. With unchanged configuration, an existing `owner` at `platform` keeps every
+  permission on every core.
+- `bin/admin.js`: `roles grant <userId|username> --role <r> --scope <s> [--expires 90m|12h|30d|<ISO date>] [--force]`;
+  `roles list` marks orphan scopes; `audit tail [--method <id>] [--since 90m|12h|30d|<ISO date>] [--limit <n>]`
+  prints the last records of this core's platform trail (read from the audit storage, so it works while the API is
+  down).
+
+### Events: write methods refuse an event the access cannot read
+
+- `events.update`, `events.delete` and `events.deleteAttachment` now refuse an event that `events.getOne` hides from
+  the access: one of its streams is held at `none` or `create-only` (own grant or inherited), even when another of
+  its streams grants `contribute`; or, for an access migrated from v1 that carries forced streams, the event is
+  outside them. The refusal is the error `events.getOne` gives for that event (`403 forbidden`).
+- Behaviour change: an app or shared access that could update, trash or delete such an event, or remove one of its
+  attachments, now gets that error and the event is left as it was. Personal accesses are unchanged, and so are
+  events whose streams are each readable to the access or covered by none of its grants.
+- `events.update`, `events.delete` and `events.deleteAttachment` on the id of a deleted event now answer
+  `404 unknown-resource` (they could fail with an internal error).
+- `events.update`, `events.delete` and `events.deleteAttachment` on an event of the CMC plugin-internal subtree now
+  answer `404 unknown-resource` to every access, personal included, as `events.getOne` does (was `403` with
+  `cmc-protected-event-write` for an app or shared access; a personal access could update or delete it). Events the
+  caller can see (the CMC inbox, a group's member records) keep the `403 cmc-protected-event-write` refusal.
+- `events.update`, `events.delete` and `events.deleteAttachment` on an event of the account-delegation internal
+  subtree now answer `404 unknown-resource` to every access, personal included, as `events.getOne` does (was
+  `400 delegation-managed-resource`). An event on the namespace root, which those accesses can read, keeps
+  `delegation-managed-resource`.
+- `events.deleteAttachment` now applies the refusals of `events.delete`: an attachment of a CMC inbox, internal or
+  member-record event cannot be removed by an app or shared access (`cmc-protected-event-write`), nor one of an
+  emails container item (`emails-reserved-stream`, personal token included), an account event or an
+  account-delegation event; a shared-secret item cannot be modified (`shared-secret-immutable`).
+- Forced streams (accesses migrated from v1) are judged in every store an event's streams belong to, not only the
+  store of its first stream, on reads and writes alike.
+- Unchanged, by design: a producer holding `create-only` or `contribute` on one of a series event's streams may still
+  append HF points to it even when it cannot read the event (no event content is returned); and `streams.delete`,
+  which requires `manage` on the whole deleted subtree, still removes those streams from (or merges into the parent)
+  the events that also sit in a stream the access cannot read.
+
+### PostgreSQL audit: reading one access's audit trail no longer walks the account's trail (operator notice)
+
+- Every app token may read the audit trail of its own access (`events.get` on `:_audit:access-<its id>`). On the
+  PostgreSQL audit engine that read every audit record of the account to make a page (about 100 to 130 ms for 20
+  records on an account of 200 000, whatever the access). It now reads the access's records in time order from a
+  new table: 0.3 ms for the same page (a page 5 000 records deep: 185 ms before, 54 ms now; 500 records: 151 ms
+  before, 10 ms now). Measured on PostgreSQL 16, 1 million audit records, data in memory. A read that also filters
+  by type keeps the previous plan (it is served by the type index). The `:_audit:accesses` listing (the account
+  owner's) no longer reads every record of the account either: 280 ms before, 1.2 ms now (24 accesses). Results
+  are the same rows in the same order; the stream filter that keeps one access out of another's trail is applied
+  exactly as before.
+- A read naming several accesses' trails at once (a personal token asking for 2 to 500 `:_audit:access-...`
+  streams in one query) uses the table too, merging the accesses' records in time order: 80 accesses holding few
+  or old records, 5.5 s before, 21 ms now (480 accesses: 32 s before, 0.13 s now, most of it planning the
+  statement). Where the previous plan was already fast it can be slower by the time spent planning (100 accesses
+  whose recent records fill the page: 5.5 ms before, 26 ms now; 500: 22 ms before, 143 ms now), and a read without
+  limit of accesses holding most of the trail takes about twice as long (196 000 records: 1.35 s before, 3.1 s
+  now). With a type filter, more than 500 accesses, or a stream that is not an access (`:_audit:accesses`,
+  an action), it reads as before. The plan follows the database's statistics: the first-start fill ends with a
+  `VACUUM (ANALYZE)` of `audit_event_streams` (about 0.5 s per million audit records, measured idle and with audit
+  writes going on; they are not blocked), without which a page of 20 next to an access holding most records could
+  take about 0.3 s instead of a few milliseconds until autovacuum's first pass. If that `VACUUM` fails, the log says
+  so and the table is used all the same.
+- **New in the database:** table `audit_event_streams` (the access ids named by each audit record), a one-row table
+  `audit_event_streams_state`, two triggers on `audit_events` (`audit_event_streams_put`,
+  `audit_event_streams_drop`) and their functions. Created at every start when missing; the triggers keep the table
+  exact whatever writes or deletes audit records (this release, a previous one, a restore, a hand statement).
+  Disk: about 360 MB per million audit records (one row per record naming one access; 32-character ids), about
+  half the size of `audit_events` itself. Each audited API call writes one more small row per access it names:
+  measured median time of an audit insert 2.92 ms without, 2.99 ms with (within noise), the slowest 1 % 3.6 ms
+  without, 6.8 ms with. Erasing the audit trail of an account of 200 000 records takes about 1.5 s instead of
+  0.5 s.
+- **First start of this release** (`migrations.autoRunOnStart`, the default; also with a SQLite base storage and
+  the PostgreSQL audit engine): the core fills the table before serving, in batches of 20 000 records, saying so in
+  its log (`audit stream index: building ...`, progress every 10 s, `VACUUM (ANALYZE) audit_event_streams in N ms`,
+  then `complete, N audit records read in N ms`). Measured: about 31 s per million audit records (the `VACUUM`
+  included) (PostgreSQL 16, data in memory, `shared_buffers` 128 MB), about
+  470 MB of WAL per million. Installing the triggers at that start takes milliseconds (18 ms with audit writes
+  going on), but waits for whatever holds a conflicting lock on `audit_events`, audit writes queuing behind it: seen
+  once at 0.8 s, right after a large deletion (most likely an autovacuum, which yields after a second). Writes go on
+  meanwhile (there are none from this core while it starts). A start stopped in the
+  middle resumes where it was, not from zero. Two processes filling at once are serialized: the second waits,
+  then finds the table complete. Later starts: one query. If the fill fails, the core starts anyway, says so in
+  its log, and reads keep the previous plan until a later start completes it. An orchestrator's start timeout
+  must allow for the fill on a large audit table. The fill uses one database connection of its own (application
+  name `open-pryv.io audit stream index`), outside `storages.engines.postgresql.max`. A rebuild from zero while
+  another core serves (a repair, see below) empties the table first: that waits for reads of the table in progress,
+  2 s at a time, so audit writes queue for 2 s at most.
+- **Large audit table: measure on a copy first** (the rate above is a floor: under write load or when the table
+  does not fit in memory it is slower), and if the wait at the first start is too long, **fill the table by hand
+  before upgrading**, while the previous release serves (it ignores these objects; its writes and deletes are
+  kept in the table by the triggers from the moment they exist). Run, in `psql` on the core's database:
+
+  ```sql
+  CREATE TABLE IF NOT EXISTS audit_event_streams (user_id TEXT NOT NULL, stream_id TEXT NOT NULL,
+    time DOUBLE PRECISION NOT NULL, eventid TEXT NOT NULL, PRIMARY KEY (user_id, stream_id, time, eventid));
+  CREATE TABLE IF NOT EXISTS audit_event_streams_state (id BOOLEAN PRIMARY KEY DEFAULT true CHECK (id),
+    complete BOOLEAN NOT NULL, cursor_user_id TEXT, cursor_eventid TEXT, updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
+  CREATE OR REPLACE FUNCTION audit_event_streams_put() RETURNS trigger LANGUAGE plpgsql AS $f$
+  BEGIN
+    IF TG_OP = 'UPDATE' THEN
+      PERFORM pg_advisory_xact_lock_shared(1886544226);
+      IF OLD.time IS NOT NULL AND OLD.stream_ids IS NOT NULL THEN
+        DELETE FROM audit_event_streams WHERE user_id = OLD.user_id AND time = OLD.time AND eventid = OLD.eventid
+          AND stream_id = ANY (string_to_array(OLD.stream_ids, ' '));
+      END IF;
+    END IF;
+    IF NEW.time IS NOT NULL AND NEW.stream_ids IS NOT NULL AND position('access-' IN NEW.stream_ids) > 0 THEN
+      INSERT INTO audit_event_streams (user_id, stream_id, time, eventid)
+        SELECT NEW.user_id, t, NEW.time, NEW.eventid FROM unnest(string_to_array(NEW.stream_ids, ' ')) AS t
+        WHERE left(t, 7) = 'access-'
+      ON CONFLICT DO NOTHING;
+    END IF;
+    RETURN NULL;
+  END;
+  $f$;
+  CREATE OR REPLACE FUNCTION audit_event_streams_drop() RETURNS trigger LANGUAGE plpgsql AS $f$
+  DECLARE
+    emptied text[];
+  BEGIN
+    PERFORM pg_advisory_xact_lock_shared(1886544226);
+    WITH e AS MATERIALIZED (
+      SELECT u.user_id FROM (SELECT DISTINCT g.user_id FROM gone g) u
+        WHERE NOT EXISTS (SELECT 1 FROM audit_events a WHERE a.user_id = u.user_id)
+    ), d AS (
+      DELETE FROM audit_event_streams s USING e WHERE s.user_id = e.user_id
+    )
+    SELECT array_agg(e.user_id) INTO emptied FROM e;
+    IF EXISTS (SELECT 1 FROM gone g WHERE emptied IS NULL OR g.user_id <> ALL (emptied)) THEN
+      DELETE FROM audit_event_streams s USING (
+        SELECT g.user_id, t AS stream_id, g.time, g.eventid FROM gone g, unnest(string_to_array(g.stream_ids, ' ')) AS t
+        WHERE g.time IS NOT NULL AND left(t, 7) = 'access-' AND (emptied IS NULL OR g.user_id <> ALL (emptied))
+      ) k
+      WHERE s.user_id = k.user_id AND s.stream_id = k.stream_id AND s.time = k.time AND s.eventid = k.eventid;
+    END IF;
+    RETURN NULL;
+  END;
+  $f$;
+  SET lock_timeout = '2s';
+  CREATE TRIGGER audit_event_streams_put AFTER INSERT OR UPDATE OF stream_ids, time, user_id, eventid
+    ON audit_events FOR EACH ROW EXECUTE FUNCTION audit_event_streams_put();
+  CREATE TRIGGER audit_event_streams_drop AFTER DELETE ON audit_events
+    REFERENCING OLD TABLE AS gone FOR EACH STATEMENT EXECUTE FUNCTION audit_event_streams_drop();
+  RESET lock_timeout;
+  BEGIN;
+  SELECT pg_advisory_xact_lock(1886544226);
+  INSERT INTO audit_event_streams (user_id, stream_id, time, eventid)
+    SELECT a.user_id, t, a.time, a.eventid FROM audit_events a, unnest(string_to_array(a.stream_ids, ' ')) AS t
+    WHERE a.time IS NOT NULL AND left(t, 7) = 'access-'
+  ON CONFLICT DO NOTHING;
+  INSERT INTO audit_event_streams_state (complete) VALUES (true)
+    ON CONFLICT (id) DO UPDATE SET complete = true, cursor_user_id = NULL, cursor_eventid = NULL, updated_at = now();
+  COMMIT;
+  VACUUM (ANALYZE) audit_event_streams;
+  ```
+
+  A `CREATE TRIGGER` that times out (it waits for the audit inserts in flight) is simply run again; one that
+  reports the trigger exists already is done (then run only what follows it). The last
+  transaction is one statement over the whole table: audit deletions (account erasures) and updates wait for it,
+  audit writes do not. An account deletion served by the API that waits that long is stopped by
+  `storages.engines.postgresql.statementTimeoutMs` (default 30 s) and answers an error: run the by-hand fill in a
+  quiet window. The first start of the release then finds the table complete. A by-hand fill that fails leaves the
+  state absent or incomplete: the start fills the table itself. Everything here was measured on PostgreSQL 16 (the
+  core supports 14 and later).
+- **With `migrations.autoRunOnStart: false`:** reads keep the previous plan (a warning says so at start) until
+  `node bin/migrate.js up` has run; running workers pick the new plan up within a minute.
+- **Never disable or drop these triggers while a core serves.** Records written or deleted meanwhile are missed,
+  and a core already reading through the table hides them. If it happened, restart every core on that database:
+  the start finds the trigger missing or disabled, repairs it and rebuilds the table from zero.
+- **Loads that bypass triggers** (`pg_restore --disable-triggers` of `audit_events` alone, a session with
+  `session_replication_role = replica`, `TRUNCATE audit_events` by hand) leave the table inexact, and the core
+  cannot detect it: after such a load the triggers are in place and firing again. After any such load, force the
+  rebuild by hand, core stopped: `UPDATE audit_event_streams_state SET complete = false, cursor_user_id = NULL,
+  cursor_eventid = NULL, updated_at = now();` then start (a fill from zero empties the table first). With
+  `TRUNCATE audit_events`, also `TRUNCATE audit_event_streams;`. Only a trigger found missing or disabled AT a
+  start is repaired without help. A full `pg_dump` / `pg_restore` of the database needs nothing: the table and its
+  state are restored as dumped, from the same snapshot as `audit_events`, and the triggers are created after the
+  data.
+- **Rolling back to the previous release:** nothing to do. It ignores the table, and the triggers (still
+  installed) keep it exact, so coming back to this release needs no rebuild. To remove everything (previous
+  release kept for good, core stopped), all together, never the triggers alone:
+  `DROP TRIGGER audit_event_streams_put ON audit_events;` `DROP TRIGGER audit_event_streams_drop ON audit_events;`
+  `DROP FUNCTION audit_event_streams_put();` `DROP FUNCTION audit_event_streams_drop();`
+  `DROP TABLE audit_event_streams, audit_event_streams_state;`
+- Records without a `time` (the core writes none) are not in the table: a read of one access does not return them.
+  Check before upgrading: `SELECT count(*) FROM audit_events WHERE time IS NULL;` should be 0.
+- SQLite audit engine: unchanged (it already reads one access's records through its full-text index): under 1 ms
+  for a page of 20 of any access on a 1-million-record audit file.
+
 ### PostgreSQL: one order for events sharing a time, new time index (operator notice)
 
 - `events.get` and audit reads on PostgreSQL return events (records) sharing a `time` in one order, by id in the
@@ -83,7 +398,10 @@
   drops `idx_event_time` and `idx_audit_time`. A by-hand build that fails leaves an invalid index: drop it
   (`DROP INDEX CONCURRENTLY idx_event_time_id;`) before building again (the migration would also drop and rebuild
   it). Do not run `node bin/migrate.js up` from the new image against a database the previous release still
-  serves: it runs every pending migration of this release, not only this one.
+  serves: it runs every pending migration of this release, not only this one. Do not start or restart a process
+  of the previous release during that by-hand build: its start asks for a lock on the table that holds writes back
+  until the build ends, and can make PostgreSQL abort the build (`deadlock detected`, an invalid index left). From this release on, a
+  process starting during a build no longer does.
 - **If the build fails** (disk full, a server-side limit), the core does not start; it says why. The build itself
   runs with no statement or lock time limit, so a `statement_timeout` set on the role or the database does not
   cancel it. The invalid index left keeps its disk until the next start drops it.
@@ -103,6 +421,21 @@
 - Events sharing a time come back by id on PostgreSQL and in creation order on SQLite: each engine keeps one
   order, the two orders differ.
 
+### Operators (PostgreSQL): migrations run one at a time, and say who they wait for
+
+- Two processes applying migrations on one database (a starting core and `node bin/migrate.js up`, two cores) are
+  serialized: the second waits for the first, then applies only what is left. The waiting process logs who holds the
+  lock, e.g. `[migrations] postgresql: another process is applying migrations; waiting for it (lock held by pid 4242
+  from 10.0.0.5 (open-pryv.io migrations))`, repeats it every minute with the time waited, and logs
+  `lock obtained after ...`. There is no time limit on that wait: a core does not start with pending migrations. A
+  holder that is alive but stuck can be found with that pid in `pg_stat_activity`. The time sort index build logs the
+  same way (`time sort indexes: ...`).
+- The lock uses one connection of its own per process during the run, outside `storages.engines.postgresql.max`
+  (application names `open-pryv.io migrations` and `open-pryv.io time sort indexes`).
+- A warning `... another process may have run at the same time` means the lock did not hold for the whole run (its
+  connection was lost, or a transaction-mode connection pooler sits between the core and PostgreSQL: migrations need
+  a direct or session-mode connection). Check the logs of the other process.
+
 ### Access tokens and session ids no longer stored in clear (operator notice)
 
 Nothing changes for clients: the same tokens, the same `token` and `apiEndpoint` in every response, the same
@@ -110,17 +443,43 @@ errors, no forced sign-in. What changes is how the core stores them, and what an
 roll back or change a key.
 
 - **Stored form.** Every access token and personal session id is stored as a keyed hash (HMAC-SHA256, the only
-  lookup key) plus an encrypted copy (AES-256-GCM, opened when the access is read). A database dump or a stolen
-  data file no longer holds a server-generated token in clear. Limit: while access integrity is active
-  (`integrity.isActive.accesses`, on by default), each access row also stores `integrity`, an unkeyed hash of the
-  access including its token, next to every other field it covers; a low-entropy token chosen by a caller, or a
-  short legacy one, can still be tested offline against it from a dump. Server-generated tokens are out of reach
-  of such a test. The keys derive from the new optional **`auth.accessTokensKey`**
+  lookup key) plus an encrypted copy (AES-256-GCM, opened when the access is read). The stored `integrity` of an
+  access (an unkeyed hash of the access, its token included, which would let a short token chosen by a caller or a
+  legacy one be tested offline) is sealed the same way in its column and opened when the access is read: the API,
+  backups and `bin/integrity-check.js` see the same `ACCESS:0:...` value as before. A database dump or a stolen
+  data file no longer holds a token in clear, nor a value to test a guessed token against, whoever chose the
+  token. The keys derive from the new optional **`auth.accessTokensKey`**
   (base64, 32 bytes; SECRET, YAML only; a placeholder value refuses the boot) when set, else from
   `auth.adminAccessKey`. Nothing to configure on an existing platform. The keys never enter the database.
+- **Deleted accesses keep no token.** The deletion record of an access, and the earlier versions (history rows) of
+  a deleted access, no longer keep its token: it is dropped at deletion, and the first start drops it from the
+  accesses deleted before the upgrade. The `integrity` of a deletion record is computed without it and now
+  verifies on the record the API returns (which never carried the token). A backup restored from before this
+  release loses the token of its deleted accesses at restore. `bin/hfs-author-scrub.js` maps the tokens of live
+  and deleted accesses to repair the authors of high-frequency series written before 2.0.0-rc.40: a core that
+  upgrades from an earlier release and never ran it must run it with this image **before the first start** (the
+  start drops the tokens of deleted accesses; afterwards the tool resolves live accesses only). With access integrity
+  off (`integrity.isActive.accesses: false`), a deletion record keeps the integrity value it had (computed with the
+  token, it no longer verifies): the integrity check reports such records if integrity is switched on again.
+- **Audit records of access writes carry the key only.** The audit record of `accesses.create` named the access by
+  `content.record.key` and also copied its `integrity` hash in `content.record.integrity`: the hash is no longer
+  written, and the first start removes it from the records already stored, in whichever engine holds the audit
+  (`storages.audit.engine`, SQLite by default, whatever the base engine). SQLite: one walk over the users' audit
+  databases, each changed database vacuumed, recorded by a marker file `audit-access-integrity-scrubbed.done` in
+  the users directory. PostgreSQL: one statement over `audit_events` (migration `20261127_120500`; the first run
+  scans the table to build the index `idx_audit_access_integrity`, which stays empty, so the same statement run at
+  every start costs nothing). After a rollback, the next start of this image also scrubs the records the earlier
+  image wrote meanwhile. The breach-scope report shows such a write with its key only. Syslog lines already sent
+  and audit exports or backups taken before the upgrade still carry the hash.
+- **Pending deletion notices.** The endpoint of a revoke notice to a peer platform, kept by the core while an
+  account is erased and the peer could not be reached (it holds a token of an access on the peer), is sealed the
+  same way while the notice is pending; once delivered or given up it is stored without the token, as before. A
+  notice whose stored endpoint does not open is given up unsent (reason `cmc-notice-credential-unreadable`).
 - **First start of this release.** Before the workers start, every stored token is converted in place: live,
-  deleted and history accesses, and sessions (expired sessions are removed). One HMAC, one encryption and one row
-  update per access; on PostgreSQL it is a migration. With `migrations.autoRunOnStart: false` the core refuses to
+  deleted and history accesses, and sessions (expired sessions are removed), every stored access `integrity` is
+  sealed and every pending deletion notice too. One HMAC, two encryptions and one row update per access; on
+  PostgreSQL it is a migration (tokens first, then the integrity values once their indexes exist). With `migrations.autoRunOnStart: false`, integrity values alone waiting for the
+  conversion only warn (lookups do not use them). With `migrations.autoRunOnStart: false` the core refuses to
   start while stored tokens wait for the conversion (they could not be looked up): run `node bin/migrate.js up`,
   then start. On SQLite the user databases are walked once (a marker file `accesses-token-protected.done` in the
   users directory records it) and any database the walk missed is converted at its first use. The same pass runs
@@ -139,7 +498,8 @@ roll back or change a key.
   `auth.adminAccessKey` value). Cores of one platform may use different values of `auth.accessTokensKey`.
 - **Rollback to an earlier image.** An earlier image cannot read the new stored form: every token would be
   rejected. Before starting it, with this image and the core stopped, run `node bin/access-tokens.js unprotect
-  --yes` (writes the clear tokens and session ids back and restores the clear-token index), then start the earlier
+  --yes` (writes the clear tokens, session ids, access integrity values and notice endpoints back and restores
+  the clear-token index; the tokens dropped from deleted accesses stay dropped), then start the earlier
   image without starting this one again. The tools of this image (`status`, `bin/backup.js`, ...) leave the rows
   in clear after `unprotect` (on SQLite a marker file `accesses-token-unprotected` records it until the next start
   of this image); `bin/migrate.js up` is a start and converts them. If `unprotect` stops because live accesses
@@ -148,18 +508,31 @@ roll back or change a key.
   opened meanwhile included). Several cores sharing one PostgreSQL database must be upgraded together.
 - **Old clear copies.** The upgrade cannot reach copies made before it: database dumps and backups taken earlier
   (treat them as credential stores), and, until vacuum, the old row versions in the data files. On PostgreSQL run
-  `VACUUM (FULL) accesses, sessions;` once after the upgrade if the old values must be gone from the data files
-  (it locks both tables while it runs). On SQLite the first start vacuums each user database it converts and the
-  shared database (a database converted later, at its first use, is not: run `VACUUM` on it). Backups made by
+  `VACUUM (FULL) accesses, sessions, cmc_deletion_notices;` once after the upgrade if the old values must be gone
+  from the data files (it locks those tables while it runs), and `VACUUM (FULL) audit_events;` for the old
+  integrity copies of the audit records (a large table: plan the lock). On SQLite the first start vacuums each user
+  database it converts, each audit database it scrubs and the shared database (a database converted later, at its
+  first use, is not, nor is the deletion-notice database: run `VACUUM` on them if the old copies must be gone).
+  Backups made by
   `bin/backup.js` still hold the tokens in clear (they restore on a core with another key): encrypt them. A
   PostgreSQL server that logs statement parameters (`log_statement = 'all'` or `'mod'`, with the default
   `log_parameter_max_length`) records in its log the clear tokens bound by the one-time conversion and by
   `unprotect`: turn that logging off for the upgrade, or purge those log files after it.
-- **Not in this change.** Credentials held elsewhere in the stores stay in clear: the access `integrity` hash
-  above, the `apiEndpoint` (token included) of a pending deletion notice to a peer core, and the credential URLs
-  CMC peers keep in an access's `clientData`.
+- **Not in this change.** Credentials held elsewhere in the stores stay in clear: the credential URLs CMC peers
+  keep in an access's `clientData` (for the life of the relationship), the retry queue of an account's CMC
+  deliveries (up to about 30 hours), and a token handed over through a one-time shared secret until it is
+  consumed or read after its expiry.
 - **`bin/access-tokens.js status`** (read-only): counts of rows in clear, under the configured key, and under other
-  keys.
+  keys, for tokens, sessions, access integrity values (`accessIntegrity`) and pending notice endpoints
+  (`deletionNotices`). `rekey` and `unprotect` cover them too. `rekey` goes on past an integrity value that does
+  not open under its previous key (damaged), names it (user id, access id) and exits 2: set that row's `integrity`
+  to NULL, core stopped, then start (the integrity check reports it as "missing integrity property"). A pending
+  deletion notice under a key `rekey` was not given is not refused at start: it is given up unsent.
+- **`bin/integrity-check.js`** reports an access whose stored token does not open (copied from a core with another
+  key, or damaged) as an error of its user, "integrity not verifiable", and checks the others; API reads of that
+  access still fail. An access whose stored integrity does not open (damaged, or copied from another account) is
+  read without it and reported as "missing integrity property". On PostgreSQL the migrations of this release also
+  add small indexes so the checks of every start, and the token drop of each deletion, read no whole table.
 
 ### Operators (PostgreSQL): the unindexed-user guard locks per account instead of on the index row
 

@@ -109,6 +109,13 @@ async function runUp (runner, args) {
   }
   // The pass the core runs at every start with autoRunOnStart (see bin/master.js).
   if (args.dryRun || args.target != null) return;
+  // PostgreSQL audit storage: fill the index of audit records by access, as
+  // the start does (also with a SQLite base storage, where no migration does).
+  const auditStorage = require('storages').auditStorage;
+  if (auditStorage != null && typeof auditStorage.ensureStreamIndex === 'function') {
+    const filled = await auditStorage.ensureStreamIndex({ logger: { info: (m) => console.log(m), warn: (m) => console.warn(m) } });
+    if (!filled.alreadyComplete) console.log(`Audit stream index: ${filled.rows} audit records read in ${filled.durationMs} ms`);
+  }
   const tokensAtRest = require('storages').getTokensAtRest();
   const res = await tokensAtRest.protectTokensAtRest();
   const changed = Object.entries(res).filter(([k, n]) => n > 0 && k !== 'accessesSkipped');

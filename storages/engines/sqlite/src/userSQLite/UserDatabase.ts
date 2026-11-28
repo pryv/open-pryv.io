@@ -281,9 +281,9 @@ function boundedWalkPage (udb: UserDatabaseInstance, query: EventsGetQuery): Eve
  *   small page of a filter many rows meet: see `walksTimeIndex`.
  * - `modifiedSince` with no stream filter: see `modifiedSincePlan`.
  *
- * `bounded`: the statement is a walk limited to the newest rows; it answers
- * only when it fills the page (`limit` rows), else `fallback` (the rowid set)
- * is run.
+ * `bounded`: the statement is a walk limited to a window of rows (the newest,
+ * or the oldest when ascending); it answers only when it fills the page
+ * (`limit` rows), else `fallback` (the rowid set) is run.
  */
 function prepareEventsGetQuery (db: SqliteDb, params: GetParams): EventsGetQuery {
   let tail = prepareQuery(params);
@@ -295,6 +295,10 @@ function prepareEventsGetQuery (db: SqliteDb, params: GetParams): EventsGetQuery
     const query = params.query.map((q) => q.type === 'streamsQuery' ? { type: 'streamsQueryExact', content: q.content } : q);
     if (walk.from != null) {
       query.push({ type: 'greaterOrEqual', content: { field: 'time', value: walk.from } });
+      fallback = set;
+    }
+    if (walk.to != null) {
+      query.push({ type: 'lowerOrEqual', content: { field: 'time', value: walk.to } });
       fallback = set;
     }
     params = { ...params, query };
@@ -326,7 +330,9 @@ let candidateProbeCap = 20_000;
  * condition). So, for a page sorted by time, count the candidates (capped):
  *
  * - At the cap the rowid set reads at least the cap: the walk is taken, whole
- *   (`from` null), when its estimate is not above the cap.
+ *   (`from` null), when its estimate is not above the cap. Otherwise the
+ *   capped count understates the density of a stream most rows hold, and a
+ *   deeper page may still be cheaper to walk: see `deepPageWalk`.
  * - Under the cap (newest first only), the rowid set reads `candidates` rows,
  *   growing with the stream (measured 4 ms at 2 400 candidates, 30 ms at
  *   18 000, against 0.3 ms for the walk when the matches are recent or spread).
@@ -338,9 +344,10 @@ let candidateProbeCap = 20_000;
  *   (`time >= from` keeps whole tie groups: a very large group of equal times
  *   at the bound is read whole. Cost only, the rows stay exact.)
  *
- * @returns false for the rowid set, else the walk and its lower time bound
+ * @returns false for the rowid set, else the walk and its time bound (`from`
+ *   the lower one, `to` the upper one of an ascending walk)
  */
-function walksTimeIndex (db: SqliteDb, params: GetParams): false | { from: number | null } {
+function walksTimeIndex (db: SqliteDb, params: GetParams): false | TimeWalk {
   const options = params.options ?? {};
   const limit = options.limit;
   if (!Number.isInteger(limit) || (limit as number) < 0) return false;
@@ -355,19 +362,82 @@ function walksTimeIndex (db: SqliteDb, params: GetParams): false | { from: numbe
   const rows = (db.prepare('SELECT max(rowid) AS n FROM events').get() as { n: number | null }).n ?? 0;
   const skip = Number.isInteger(options.skip) && (options.skip as number) > 0 ? options.skip as number : 0;
   const page = (limit as number) + skip;
-  if (candidates >= candidateProbeCap) return page * rows <= candidates * candidateProbeCap ? { from: null } : false;
+  if (candidates >= candidateProbeCap) {
+    if (page * rows <= candidates * candidateProbeCap) return { from: null };
+    return deepPageWalk(db, params, filter.fts, page, rows);
+  }
   if (!boundedWalk || candidates === 0 || (options.sort as Record<string, number>).time >= 0) return false;
   const estimate = Math.ceil(page * rows / candidates);
   const budget = Math.min(Math.floor(candidates / 2), 4 * estimate);
   if (budget < 1 || estimate > budget) return false;
-  // The newest `budget` rows at or before `toTime`, any state: index only.
-  const toTime = params.query.find((q) => q.type === 'lowerOrEqual' && (q.content as { field?: string })?.field === 'time');
+  const from = newestBound(db, params, budget);
+  return from === false ? false : { from };
+}
+
+type TimeWalk = { from: number | null, to?: number };
+
+/** The `toTime` of the query (a `lowerOrEqual` on `time`), bound, or null. */
+function toTimeOf (params: GetParams): unknown {
+  const item = params.query.find((q) => q.type === 'lowerOrEqual' && (q.content as { field?: string })?.field === 'time');
+  return item == null ? null : bindValue('time', (item.content as { value: unknown }).value);
+}
+
+/** The time of the `budget`-th newest row at or before `toTime`, any state (the `time` index only); false when there is none. */
+function newestBound (db: SqliteDb, params: GetParams, budget: number): number | false {
+  const toTime = toTimeOf(params);
   const bound = toTime == null
     ? db.prepare('SELECT time FROM events ORDER BY time DESC LIMIT 1 OFFSET ?').get(budget - 1)
-    : db.prepare('SELECT time FROM events WHERE time <= ? ORDER BY time DESC LIMIT 1 OFFSET ?')
-      .get(bindValue('time', (toTime.content as { value: unknown }).value), budget - 1);
+    : db.prepare('SELECT time FROM events WHERE time <= ? ORDER BY time DESC LIMIT 1 OFFSET ?').get(toTime, budget - 1);
   const from = (bound as { time: number | null } | undefined)?.time;
-  return typeof from === 'number' ? { from } : false;
+  return typeof from === 'number' ? from : false;
+}
+
+/**
+ * A page at the cap that the whole walk refuses. The capped count gives no
+ * density, so a probe on the full-text index (by rowid, the index only)
+ * finds the page-th candidate from the end the walk starts at: `reach`, the
+ * rows between them. Rows are inserted in time order in an audit log, so the
+ * walk would read about `reach` rows; it is taken over `budget` (twice that)
+ * rows of the `time` index when that is not above half the candidates the
+ * rowid set would read (`page / reach` is the density the probe saw), with
+ * the rowid set as fallback when it does not fill the page. A file whose
+ * rowids do not follow time (a restore, an import) only makes the estimate
+ * wrong: the walk falls short and the rowid set answers. Ascending, a row
+ * without a time sorts first and the window would drop it: no walk then.
+ * Measured on 1M rows, a stream on 60 % of them, skip 5000: the probe 0.1 ms,
+ * the walk about 9 000 rows instead of 600 000 through the rowid set.
+ */
+function deepPageWalk (db: SqliteDb, params: GetParams, fts: string, page: number, rows: number): false | TimeWalk {
+  if (!boundedWalk || page < 1) return false;
+  const desc = (params.options?.sort as Record<string, number>).time < 0;
+  let reach: number;
+  if (desc) {
+    // A `rowid <=` bound does not shorten the probe backward (the full-text
+    // index then reads every posting above it), so a walk from `toTime` has
+    // no reach to go by.
+    if (toTimeOf(params) != null) return false;
+    const probe = db.prepare('SELECT rowid AS r FROM events_fts WHERE streamIds MATCH ? ORDER BY rowid DESC LIMIT 1 OFFSET ?')
+      .get(fts, page - 1) as { r: number } | undefined;
+    if (probe == null) return false;
+    reach = rows - probe.r + 1;
+  } else {
+    const probe = db.prepare('SELECT rowid AS r FROM events_fts WHERE streamIds MATCH ? ORDER BY rowid ASC LIMIT 1 OFFSET ?')
+      .get(fts, page - 1) as { r: number } | undefined;
+    if (probe == null) return false;
+    const first = (db.prepare('SELECT min(rowid) AS m FROM events').get() as { m: number | null }).m ?? 0;
+    reach = probe.r - first + 1;
+  }
+  if (reach < 1) return false;
+  const budget = Math.min(2 * reach, rows);
+  if (budget > Math.max(candidateProbeCap, Math.floor(page * rows / reach / 2))) return false;
+  if (budget >= rows) return { from: null };
+  if (desc) {
+    const from = newestBound(db, params, budget);
+    return from === false ? false : { from };
+  }
+  if (db.prepare('SELECT 1 FROM events WHERE time IS NULL LIMIT 1').get() != null) return false;
+  const bound = db.prepare('SELECT time FROM events ORDER BY time ASC LIMIT 1 OFFSET ?').get(budget - 1) as { time: number | null } | undefined;
+  return typeof bound?.time === 'number' ? { from: null, to: bound.time } : false;
 }
 
 function _setCandidateProbeCap (cap: number): number {

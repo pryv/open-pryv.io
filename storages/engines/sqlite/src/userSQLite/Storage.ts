@@ -17,6 +17,7 @@ const { LRUCache: LRU } = require('lru-cache');
 const { UserDatabase, AuditUserDatabase } = require('./UserDatabase.ts');
 const migrations = require('./migrations/index.ts');
 const { _internals } = require('../_internals.ts');
+const { isPlatformTrail, platformTrailDeletionError } = require('../../../../interfaces/auditStorage/AuditStorage.ts');
 
 const CACHE_SIZE = 500;
 const VERSION = '1.0.0';
@@ -116,9 +117,19 @@ class SqliteStorage {
   }
 
   /**
+   * An audit storage keeps the platform trail under its reserved id, in a
+   * directory of its own below the users path (see AuditStorage.ts); a store
+   * of the users' own events does not.
+   */
+  acceptsPlatformTrail (): boolean {
+    return this.options.userEvents !== true;
+  }
+
+  /**
    * close and delete the database relative to a specific user
    */
   async deleteUser (userId: string): Promise<void> {
+    if (this.acceptsPlatformTrail() && isPlatformTrail(userId)) throw platformTrailDeletionError();
     this.logger.info('deleteUser: ' + userId);
     this.checkInitialized();
     this.userDBsCache.delete(userId); // dispose closes the local handle

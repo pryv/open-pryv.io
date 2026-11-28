@@ -114,7 +114,8 @@ function filter (filter: AuditFilter): void {
 function unknownFilterMethods (filter: AuditFilter | null | undefined): string[] {
   const entries: unknown[] = [filter?.methods?.include, filter?.methods?.exclude].flatMap((list) => Array.isArray(list) ? list : []);
   return [...new Set(entries.filter((m): m is string => typeof m === 'string'))].filter((m) => {
-    if (m === 'all' || ALL_METHODS_MAP[m] === true) return false;
+    // `admin-acts`: the administration acts (AuditFilter.ts ADMIN_ACTS).
+    if (m === 'all' || m === 'admin-acts' || ALL_METHODS_MAP[m] === true) return false;
     const parts = m.split('.');
     const isAggregate = parts.length === 2 && parts[1] === 'all';
     return !(isAggregate && ALL_METHODS.some((known: string) => known.startsWith(parts[0] + '.')));

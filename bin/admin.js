@@ -17,13 +17,16 @@
 //   node bin/admin.js setup finish               # setup done without a first administrator
 //   node bin/admin.js claim-code [--role owner] [--scope platform] [--ttl 15m]
 //   node bin/admin.js roles list
+//   node bin/admin.js roles grant <userId | username> --role <r> --scope <s> [--expires 30d] [--force]
 //   node bin/admin.js roles revoke <userId | username> [--role <r>] [--scope <s>] [--force]
 //   node bin/admin.js sessions revoke <userId | username>
+//   node bin/admin.js audit tail [--method <id>] [--since 1h] [--limit 50]
 //
 // A multi-core joiner that layers a host-config file passes it with
 // `--config <file>`, as for bin/master.js. A code is printed once and never
 // stored (only its SHA-256 is): keep the output out of shared logs. Each act
-// leaves one line (never a code) in the audit syslog channel when it is on.
+// leaves one line (never a code) in the audit syslog channel when it is on,
+// and one record in this core's platform trail (ids `admin.cli.*`).
 
 const path = require('path');
 const fs = require('fs');
@@ -88,6 +91,7 @@ require('@pryv/boiler').init({
       case 'claim-code': status = await claimCodeCommand(ctx, args); break;
       case 'roles': status = await rolesCommand(ctx, args); break;
       case 'sessions': status = await sessionsCommand(ctx, args); break;
+      case 'audit': status = await auditTailCommand(ctx, args); break;
       default: throw new Error('unknown command');
     }
     process.exit(status);
@@ -186,7 +190,7 @@ async function claimCodeCommand ({ config, db }, a) {
   const role = a.role ?? roles.ROLE_OWNER;
   const scope = a.scope ?? roles.SCOPE_PLATFORM;
   if (!roles.isRole(role)) throw new Error('--role must be one of: ' + roles.ROLES.join(', '));
-  if (!roles.isScope(scope)) throw new Error('--scope must be: ' + roles.SCOPE_PLATFORM);
+  if (!roles.isScope(scope)) throw new Error('--scope must be ' + SCOPE_GRAMMAR);
   const ttlMs = a.ttl != null ? parseTtl(a.ttl, roles.CLAIM_TTL_MAX_MS) : undefined;
   const minted = await roles.mintClaimCode(db, { role, scope, mintedBy: 'cli', now: Date.now(), ttlMs });
   const rule = '='.repeat(72);
@@ -216,18 +220,24 @@ async function rolesCommand (ctx, a) {
       return 0;
     }
     const now = Date.now();
+    const { hostingsOf, scopeState } = require('../components/business/src/admin/scopes.ts');
+    const hostings = hostingsOf(ctx.config);
+    const coreIds = await knownCoreIds(ctx);
     for (const { userId, row } of rows) {
       const username = await localUsername(userId);
       console.log(userId + (username != null ? ' (' + username + ')' : ' (not an account of this core)'));
       for (const g of row.grants) {
         const active = roles.activeGrants({ grants: [g] }, now).length === 1;
+        // An orphan scope names no region, zone, hosting or core the platform knows: it gives nothing.
+        const orphan = active && scopeState(g.scope, hostings, coreIds) === 'orphan';
         console.log('  ' + g.role + ' @ ' + g.scope + '  via ' + g.via + ' by ' + g.grantedBy + ' at ' + iso(g.grantedAt) +
-          (g.expiresAt != null ? ', expires ' + iso(g.expiresAt) : '') + (active ? '' : '  [inactive]'));
+          (g.expiresAt != null ? ', expires ' + iso(g.expiresAt) : '') + (active ? '' : '  [inactive]') + (orphan ? '  [orphan scope]' : ''));
       }
       if (row.sessionsRevokedAt != null) console.log('  sessions revoked at ' + iso(row.sessionsRevokedAt));
     }
     return 0;
   }
+  if (a.sub === 'grant') return await grantCommand(ctx, a, roles);
   // revoke
   const userId = await resolveUserId(a.target);
   let revoked;
@@ -248,6 +258,79 @@ async function rolesCommand (ctx, a) {
   console.log('Revoked: ' + (a.role != null ? a.role + (a.scope != null ? ' @ ' + a.scope : '') : 'every grant') + ' of ' + userId +
     '. Its administrator sessions stop at their next request.');
   return 0;
+}
+
+/** `roles grant <userId | username> --role <r> --scope <s> [--expires <when>] [--force]`. */
+async function grantCommand (ctx, a, roles) {
+  if (a.role == null || !roles.isRole(a.role)) throw new Error('--role must be one of: ' + roles.ROLES.join(', '));
+  if (a.scope == null || !roles.isScope(a.scope)) throw new Error('--scope must be ' + SCOPE_GRAMMAR);
+  const now = Date.now();
+  const expiresAt = a.expires != null ? parseExpiry(a.expires, now) : null;
+  const userId = await resolveUserId(a.target);
+  try {
+    await roles.grantRole(ctx.db, userId, { role: a.role, scope: a.scope, grantedBy: 'cli', via: 'grant', now, expiresAt, force: a.force });
+  } catch (err) {
+    if (err instanceof roles.LastOwnerError) {
+      console.error('admin: ' + err.message + ' (--force replaces it anyway; the platform is then administered with the admin key and a claim code)');
+      return 1;
+    }
+    throw err;
+  }
+  await recordAct(ctx.config, 'role.granted', { target: userId, role: a.role, scope: a.scope, expiresAt: expiresAt != null ? iso(expiresAt) : null, force: a.force ? 'yes' : null });
+  const { hostingsOf, scopeState } = require('../components/business/src/admin/scopes.ts');
+  const orphan = scopeState(a.scope, hostingsOf(ctx.config), await knownCoreIds(ctx)) === 'orphan';
+  console.log('Granted: ' + a.role + ' @ ' + a.scope + ' to ' + userId + (expiresAt != null ? ', until ' + iso(expiresAt) : '') + '.');
+  if (orphan) console.log('Note: ' + a.scope + ' names no region, zone, hosting or core this platform knows: the grant gives nothing until it does.');
+  if (a.scope !== roles.SCOPE_PLATFORM) console.log('Role management, claim codes and the other platform-wide writes need a grant at scope platform.');
+  return 0;
+}
+
+/**
+ * `audit tail [--method <id>] [--since <when>] [--limit <n>]`: the last
+ * records of this core's platform trail (the administration acts), read from
+ * the audit storage as GET /system/admin/audit reads it, oldest first.
+ */
+async function auditTailCommand ({ config, storages }, a) {
+  const trail = require('../components/api-server/src/methods/systemAdminAudit.ts');
+  const limit = a.limit != null ? Number(a.limit) : 20;
+  if (!Number.isInteger(limit) || limit < 1 || limit > trail.AUDIT_READ_MAX_LIMIT) throw new Error('--limit must be a whole number from 1 to ' + trail.AUDIT_READ_MAX_LIMIT);
+  if (a.method != null && !/^[A-Za-z0-9._-]{1,128}$/.test(a.method)) throw new Error('--method must be a method id (letters, digits, ., _, -)');
+  const fromTime = a.since != null ? parseSince(a.since, Date.now()) / 1000 : null;
+  if (config.get('audit:active') !== true || !trail.keepsPlatformTrail(storages.auditStorage)) {
+    console.error('admin: this core keeps no platform trail: audit is off, or its audit storage does not keep the trail.');
+    return 1;
+  }
+  const { events } = await trail.readPlatformTrail(storages.auditStorage, { fromTime, methodId: a.method ?? undefined, limit, skip: 0 });
+  if (events.length === 0) {
+    console.log('No record' + (a.method != null ? ' of ' + a.method : '') + (a.since != null ? ' since ' + iso(fromTime * 1000) : '') + ' in the platform trail of this core.');
+    return 0;
+  }
+  for (const e of events.reverse()) console.log(trailLine(e));
+  return 0;
+}
+
+/** One line of a platform-trail record: when, what, done or refused, who, on what (no secret is ever recorded). */
+function trailLine (e) {
+  const action = (e.streamIds ?? []).map((s) => String(s)).find((s) => s.startsWith('action-'));
+  const methodId = action != null ? action.slice('action-'.length) : '?';
+  const record = e.content?.record ?? {};
+  const s = record.subject ?? {};
+  const who = [s.via ?? '?', s.userId, s.role != null ? s.role + '@' + s.scope + (s.localGrant ? ' (local)' : '') : null].filter((x) => x != null).join(' ');
+  const outcome = String(e.type ?? '').includes('error') ? 'refused' + (e.content?.id != null ? ' (' + e.content.id + ')' : '') : 'done';
+  const target = record.target != null ? '  on ' + JSON.stringify(record.target) : '';
+  return iso(Math.round(e.time * 1000)) + '  ' + methodId + '  ' + outcome + '  by ' + who + target;
+}
+
+/** `90m`, `12h`, `30d` ago, or an ISO 8601 date-time: milliseconds since the epoch, not in the future. */
+function parseSince (raw, now) {
+  const s = String(raw).trim();
+  const m = /^(\d+)\s*([mhd])$/i.exec(s);
+  const at = m != null
+    ? now - Number(m[1]) * { m: 60000, h: 3600000, d: 86400000 }[m[2].toLowerCase()]
+    : (/^\d{4}-\d{2}-\d{2}/.test(s) ? Date.parse(s) : NaN);
+  if (!Number.isFinite(at)) throw new Error('--since must be a duration (90m, 12h, 30d) or an ISO 8601 date-time');
+  if (at > now) throw new Error('--since must not be in the future');
+  return at;
 }
 
 async function sessionsCommand (ctx, a) {
@@ -285,6 +368,34 @@ async function localUsername (userId) {
   }
 }
 
+const SCOPE_GRAMMAR = 'platform, region:<id>, zone:<id>, hosting:<id> or core:<id> (an id is 1 to 128 of A-Z a-z 0-9 . _ -)';
+
+/** The core ids the platform store lists, this core's included. */
+async function knownCoreIds ({ config, db }) {
+  const ids = new Set([String(config.get('core:id') ?? 'single')]);
+  try {
+    for (const core of await db.getAllCoreInfos()) if (typeof core?.id === 'string') ids.add(core.id);
+  } catch (_e) { /* the core list is not readable: this core alone */ }
+  return [...ids];
+}
+
+/** `30d`, `12h`, `90m` from now, or an ISO 8601 date-time: milliseconds since the epoch, in the future. */
+function parseExpiry (raw, now) {
+  const s = String(raw).trim();
+  const m = /^(\d+)\s*([mhd])$/i.exec(s);
+  let at;
+  if (m != null) {
+    at = now + Number(m[1]) * { m: 60000, h: 3600000, d: 86400000 }[m[2].toLowerCase()];
+  } else if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+    at = Date.parse(s);
+  } else {
+    at = NaN;
+  }
+  if (!Number.isFinite(at)) throw new Error('--expires must be a duration (90m, 12h, 30d) or an ISO 8601 date-time');
+  if (at <= now) throw new Error('--expires must be in the future');
+  return at;
+}
+
 /** `15m`, `2h`, `30` (minutes): milliseconds, more than 0 and at most `maxMs`. */
 function parseTtl (raw, maxMs) {
   const m = /^(\d+)\s*([mh]?)$/i.exec(String(raw).trim());
@@ -309,12 +420,24 @@ function removeSetupCodeFile () {
   }
 }
 
+/** The audit method id of each act of this tool (declared in audit/src/apiMethods/adminRoles.ts). */
+const ACT_METHOD_IDS = Object.freeze({
+  'setup-code.replaced': 'admin.cli.setupCode.replaced',
+  'setup.finished': 'admin.cli.setup.finished',
+  'claim-code.created': 'admin.cli.claimCode.created',
+  'role.granted': 'admin.cli.role.granted',
+  'role.deleted': 'admin.cli.role.deleted',
+  'sessions.revoked': 'admin.cli.sessions.revoked'
+});
+
 /**
  * One line per act of this tool (never a code): in the tool's log and, when
- * `audit.syslog.active`, through the audit syslog channel (notice level), so
- * a later investigation finds the acts done from a shell.
+ * `audit.syslog.active`, through the audit syslog channel (notice level); and
+ * one record in this core's platform trail (`storeAct`), so a later
+ * investigation finds the acts done from a shell.
  */
 async function recordAct (config, act, fields) {
+  await storeAct(config, act, fields);
   let osUser = 'unknown';
   try { osUser = require('os').userInfo().username; } catch (_e) { /* no passwd entry in some containers */ }
   const parts = ['admin-cli', act];
@@ -340,8 +463,61 @@ async function recordAct (config, act, fields) {
   }
 }
 
+/**
+ * The record of an act of this tool in the platform trail, when audit is on,
+ * the audit storage keeps the trail and `audit.platformTrail.filter` selects
+ * its id (`admin-acts` does): `{ subject: { via: 'cli', osUser }, target?:
+ * { userId }, diff? }`, never a code. A record that cannot be written is
+ * reported; the act itself is done.
+ */
+async function storeAct (config, act, fields) {
+  const methodId = ACT_METHOD_IDS[act];
+  try {
+    if (methodId == null || config.get('audit:active') !== true) return;
+    const storage = require('storages').auditStorage;
+    if (storage == null || storage.acceptsPlatformTrail?.() !== true) return;
+    const AuditFilter = require('../components/audit/src/AuditFilter.ts').default;
+    const filter = new AuditFilter({
+      syslogFilter: config.get('audit:syslog:filter'),
+      storageFilter: config.get('audit:storage:filter'),
+      platformTrailFilter: config.get('audit:platformTrail:filter') ?? null
+    });
+    const channels = filter.isAudited(methodId);
+    if (!channels || channels.platformTrail !== true) return;
+    const C = require('../components/audit/src/Constants.ts').default;
+    let osUser = 'unknown';
+    try { osUser = require('os').userInfo().username; } catch (_e) { /* no passwd entry in some containers */ }
+    const record = { subject: { via: 'cli', osUser } };
+    const diff = {};
+    for (const [k, v] of Object.entries(fields)) {
+      if (v == null) continue;
+      if (k === 'target') record.target = { userId: v };
+      else diff[k] = v;
+    }
+    if (Object.keys(diff).length > 0) record.diff = diff;
+    const now = require('unix-timestamp').now();
+    const event = {
+      id: require('@paralleldrive/cuid2').createId(),
+      createdBy: 'system',
+      modifiedBy: 'system',
+      streamIds: [C.ACCESS_STREAM_ID_PREFIX + 'admin-cli', C.ACTION_STREAM_ID_PREFIX + methodId],
+      time: now,
+      endTime: now,
+      created: now,
+      modified: now,
+      trashed: false,
+      type: C.EVENT_TYPE_VALID,
+      content: { action: methodId, source: { name: 'admin-cli' }, record }
+    };
+    const trail = await storage.forUser(C.PLATFORM_TRAIL_USER_ID);
+    await trail.createEvent(event);
+  } catch (err) {
+    console.error('admin: the platform-trail record of this act was not written: ' + ((err && err.message) || err));
+  }
+}
+
 function parseArgs (list) {
-  const out = { command: null, sub: null, target: null, positional: [], new: false, hash: false, force: false, role: null, scope: null, ttl: null, config: null };
+  const out = { command: null, sub: null, target: null, positional: [], new: false, hash: false, force: false, role: null, scope: null, ttl: null, expires: null, method: null, since: null, limit: null, config: null };
   const rest = [];
   for (let i = 0; i < list.length; i++) {
     const a = list[i];
@@ -356,6 +532,10 @@ function parseArgs (list) {
     else if (a === '--role') out.role = value();
     else if (a === '--scope') out.scope = value();
     else if (a === '--ttl') out.ttl = value();
+    else if (a === '--expires') out.expires = value();
+    else if (a === '--method') out.method = value();
+    else if (a === '--since') out.since = value();
+    else if (a === '--limit') out.limit = value();
     else if (a === '--config') out.config = value();
     else if (a.startsWith('--')) throw new Error('unknown option ' + a);
     else rest.push(a);
@@ -377,12 +557,16 @@ function parseArgs (list) {
     case 'roles':
       out.sub = rest.shift() ?? null;
       if (out.sub === 'list' && rest.length === 0) break;
-      if (out.sub === 'revoke' && rest.length === 1) { out.target = rest[0]; break; }
-      throw new Error('roles list | roles revoke <userId | username>');
+      if ((out.sub === 'revoke' || out.sub === 'grant') && rest.length === 1) { out.target = rest[0]; break; }
+      throw new Error('roles list | roles grant <userId | username> --role <r> --scope <s> | roles revoke <userId | username>');
     case 'sessions':
       out.sub = rest.shift() ?? null;
       if (out.sub === 'revoke' && rest.length === 1) { out.target = rest[0]; break; }
       throw new Error('sessions revoke <userId | username>');
+    case 'audit':
+      out.sub = rest.shift() ?? null;
+      if (out.sub === 'tail' && rest.length === 0) break;
+      throw new Error('audit tail [--method <id>] [--since <when>] [--limit <n>]');
     default:
       throw new Error('unknown command ' + JSON.stringify(out.command));
   }
@@ -404,10 +588,20 @@ function printUsage (stream) {
     '  node bin/admin.js claim-code [--role owner] [--scope platform] [--ttl 15m]',
     '                                                a one-time administrator code (default 15 min, at most 24h)',
     '  node bin/admin.js roles list                  every administrator and its grants',
+    '  node bin/admin.js roles grant <userId|username> --role <r> --scope <s> [--expires <when>] [--force]',
+    '                                                give a role at a scope (or replace that grant); <when>:',
+    '                                                90m, 12h, 30d or an ISO 8601 date-time; replacing the',
+    '                                                last lasting owner grant by an expiring one needs --force',
     '  node bin/admin.js roles revoke <userId|username> [--role <r>] [--scope <s>] [--force]',
     '                                                remove grants; the last owner grant needs --force',
     '  node bin/admin.js sessions revoke <userId|username>',
     '                                                refuse every administrator session opened until now',
+    '  node bin/admin.js audit tail [--method <id>] [--since <when>] [--limit <n>]',
+    '                                                the last records of this core\'s platform trail (default',
+    '                                                20, at most 1000); <when>: 90m, 12h, 30d or an ISO date-time',
+    '',
+    'Roles: owner, operator, support, auditor, app-reviewer, viewer.',
+    'Scopes: platform, region:<id>, zone:<id>, hosting:<id>, core:<id>.',
     '',
     'Options:',
     '  --config <file>   a host-config file layered on top (multi-core joiner), as for bin/master.js',

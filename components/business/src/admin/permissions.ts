@@ -10,7 +10,7 @@
  * (`<capability>:<action>`), shared with the administration portal, which
  * gates its modules on the same names. A role is a bundle of these names
  * (see roles.ts); a route needs one of them (see the route table of the
- * api-server).
+ * api-server). Where a grant gives them: scopes.ts and roles.ts.
  *
  * The list is a public contract: a name is added, never renamed or reused
  * with another meaning.
@@ -68,6 +68,47 @@ export const STEP_UP_PERMISSIONS: ReadonlySet<AdminPermission> = new Set<AdminPe
   'roles:grant',
   'claimCodes:mint',
   'users:delete'
+]);
+
+/**
+ * Writes on platform-wide state: a grant gives them only at scope `platform`
+ * (a grant scoped to a region, zone, hosting or core, and a local grant,
+ * never do).
+ */
+export const PLATFORM_ONLY_WRITES: ReadonlySet<AdminPermission> = new Set<AdminPermission>([
+  'roles:grant',
+  'claimCodes:mint',
+  'setup:write',
+  'config:write',
+  'dns:write',
+  'mail:write',
+  'observability:write',
+  'extId:write',
+  'cores:write',
+  'bootstrap:issue',
+  'delegation:write'
+]);
+
+/** Held by the `owner` role only. */
+export const OWNER_ONLY_PERMISSIONS: ReadonlySet<AdminPermission> = new Set<AdminPermission>([
+  'claimCodes:mint',
+  'roles:grant',
+  'setup:write',
+  'delegation:write',
+  'bootstrap:issue'
+]);
+
+/**
+ * OAuth client and publisher permissions: given by grants at scope
+ * `platform` or `region:<r>` (any region the hierarchy knows: the method
+ * checks the row's regions), never by narrower scopes.
+ */
+export const REGION_SCOPED_PERMISSIONS: ReadonlySet<AdminPermission> = new Set<AdminPermission>([
+  'oauthClients:read',
+  'oauthClients:write',
+  'oauthClients:review',
+  'publishers:read',
+  'publishers:review'
 ]);
 
 const KNOWN = new Set<string>(PERMISSIONS);

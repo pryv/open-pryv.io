@@ -332,7 +332,31 @@ function getTokensAtRest (): TokensAtRest {
   if (typeof mod.getTokensAtRest !== 'function') {
     throw new Error('the base storage engine does not protect access tokens at rest');
   }
-  return mod.getTokensAtRest();
+  const passes: TokensAtRest = mod.getTokensAtRest();
+  // The conversion pass also removes the audit copies of the access hash, in
+  // the AUDIT engine's storage (which need not be the base one: PostgreSQL
+  // base with SQLite audit is the default pairing).
+  return Object.assign({}, passes, {
+    protectTokensAtRest: async (...args: unknown[]): Promise<Record<string, number>> => {
+      const res = await (passes.protectTokensAtRest as (...a: unknown[]) => Promise<Record<string, number>>)(...args);
+      const audit = await scrubAuditCopiesOfAccessIntegrity(res);
+      return audit == null ? res : Object.assign({}, res, { auditRecords: audit.records, auditFailedUsers: audit.failedUsers });
+    }
+  });
+}
+
+/**
+ * Run the audit engine's scrub of the access hash copied into access-write
+ * records. `force` when the base pass converted rows: a previous image wrote
+ * them after a rollback, and its audit records carry the hash again.
+ */
+async function scrubAuditCopiesOfAccessIntegrity (res: Record<string, number>): Promise<{ records: number; failedUsers: number } | null> {
+  const auditEngine = pluginLoader.getEngineFor('auditStorage');
+  if (auditEngine == null) return null;
+  const am = pluginLoader.getEngineModule(auditEngine);
+  if (typeof am.scrubAccessAuditIntegrity !== 'function') return null;
+  const force = (res.accesses ?? 0) > 0 || (res.integrity ?? 0) > 0;
+  return await am.scrubAccessAuditIntegrity({ force, auditStorage });
 }
 
 /** Whether the current call runs inside `runMaintenance` (false without PostgreSQL). */

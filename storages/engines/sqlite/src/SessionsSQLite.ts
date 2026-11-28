@@ -10,6 +10,7 @@ import { createRequire } from 'node:module';
 import type { SqliteDb } from './types.ts';
 import type { SessionData } from '../../../interfaces/_shared/domain.ts';
 import type { TokenProtection } from '../../../interfaces/_shared/tokenProtection.ts';
+import { keyIdPrefixLength, keyIdPrefixesForeign } from '../../../interfaces/_shared/tokenProtection.ts';
 const require = createRequire(import.meta.url);
 
 // A bearer secret: from node:crypto, not an id library.
@@ -221,13 +222,20 @@ class SessionsSQLite {
 
   // -- Token at rest: conversion, rollback, re-key --
 
+  /** Run by every process at storage init: `sessions_clear` is empty in steady state. */
   hasClearRows (): boolean {
     return this.db.prepare('SELECT 1 FROM sessions WHERE id_enc IS NULL LIMIT 1').get() != null;
   }
 
+  /**
+   * The smallest and the largest key-id prefix of the protected sessions, read
+   * from `sessions_kid` (same expression for an 8-character key id).
+   */
   hasForeignKeyRows (): boolean {
-    return this.db.prepare('SELECT 1 FROM sessions WHERE id_enc IS NOT NULL AND substr(id, 1, ?) <> ? LIMIT 1')
-      .get(this.tokenProtection.kid.length + 1, this.tokenProtection.kid + '.') != null;
+    const n = keyIdPrefixLength(this.tokenProtection.kid);
+    const bound = (dir: 'ASC' | 'DESC'): unknown => this.db.prepare<{ k: string }>(`SELECT substr(id, 1, ${n}) AS k FROM sessions ` +
+      `WHERE id_enc IS NOT NULL ORDER BY substr(id, 1, ${n}) ${dir} LIMIT 1`).get()?.k;
+    return keyIdPrefixesForeign({ lo: bound('ASC'), hi: bound('DESC') }, this.tokenProtection.kid);
   }
 
   /**

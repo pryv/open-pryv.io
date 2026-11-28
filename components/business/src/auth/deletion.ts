@@ -11,6 +11,7 @@ import type { AccountErasureRow } from 'storages/interfaces/baseStorage/Erasures
 import { erasureLedgerConfig } from '../erasureLedger/config.ts';
 import { writeErasureRecord, ledgerKey } from '../erasureLedger/index.ts';
 import { recordAccountDeleted as writeAccountDeletedRecord } from './accountAudit.ts';
+import { scrubAccountNames } from '../admin/accountNames.ts';
 const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
 const fs = require('fs');
@@ -36,6 +37,8 @@ type MethodContext = {
   // lists them is gone by then).
   seriesNamespaces?: string[];
   deletionByAdmin?: boolean;
+  // The record of the call in the platform trail: who asked, which account.
+  auditIntegrityPayload?: unknown;
   // What decided an erasure run outside auth.delete (eraseAccount).
   erasureTrigger?: string;
   // The record of the erasure in progress (openErasureRecord).
@@ -128,6 +131,8 @@ class Deletion {
         const locked = lockdownRefusal(this.config, 'users');
         if (locked != null) return next(locked);
         context.deletionByAdmin = true;
+        // An administration act: kept in the platform trail (audit `admin-acts`).
+        context.auditIntegrityPayload = { subject: { via: 'admin-key' } };
         return setAdminAuditAccessId(context, params, result, next);
       }
       // Neither the key nor the header: a near-miss key would land in the log.
@@ -148,6 +153,9 @@ class Deletion {
         const targetId = typeof params.username === 'string'
           ? await usersRepository.getUserIdForUsername(params.username)
           : null;
+        // The holder's own deletion: kept in the platform trail only when the
+        // operator names `auth.delete` there (not an administration act).
+        context.auditIntegrityPayload = { subject: { via: 'personal-token', userId: context.user?.id } };
         if (targetId == null || targetId !== context.user?.id) {
           return next(errors.forbidden('A personal token can only delete its own account.'));
         }
@@ -162,6 +170,12 @@ class Deletion {
   async validateUserExists (context: MethodContext, params: { username: string }, _result: ResultBag, next: Next) {
     const usersRepository = await getUsersRepository();
     const user = await usersRepository.getUserByUsername(params.username);
+    // The account the platform-trail record names: its id and the keyed hash of its name, never the name.
+    const payload = context.auditIntegrityPayload;
+    if (payload != null && typeof payload === 'object' && 'subject' in payload) {
+      const target = user?.id != null ? { userId: user.id, username: user.username } : { username: params.username };
+      context.auditIntegrityPayload = { ...payload, target: scrubAccountNames(target, this.config) };
+    }
     if (!user || !user.id) {
       return next(errors.unknownResource('user', params.username));
     }

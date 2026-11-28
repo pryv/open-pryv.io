@@ -21,6 +21,7 @@ const { redactUrl } = require('utils/src/redactUrl.ts');
 const { coreIdProblem } = require('platform/src/coreIdentity.ts');
 const { countEmailLookup } = require('./emailLookupBudget.ts');
 const { getLogger } = require('@pryv/boiler');
+const { adminKeyAct, adminRoute, setRouteAct } = require('../../methods/helpers/adminAudit.ts') as typeof import('../../methods/helpers/adminAudit.ts');
 
 const logger = getLogger('routes:reg:admin');
 
@@ -311,10 +312,11 @@ export default function (expressApp: ExpressApp, app: App) {
    * GET /admin/servers/:src/rename/:dst — rename server (migrate users).
    * In multi-core: updates user-to-core mappings in PlatformDB.
    */
-  expressApp.get('/reg/admin/servers/:srcServerName/rename/:dstServerName', checkAdmin, unlessLocked('cores'), async (req: Request, res: Response, next: NextFunction) => {
+  expressApp.get('/reg/admin/servers/:srcServerName/rename/:dstServerName', checkAdmin, adminKeyAct('system.reg.servers.rename', app.config), adminRoute(), unlessLocked('cores'), async (req: Request, res: Response, next: NextFunction) => {
     try {
       const srcName = req.params.srcServerName;
       const dstName = req.params.dstServerName;
+      setRouteAct(res, { target: { srcCore: String(srcName).slice(0, 256), dstCore: String(dstName).slice(0, 256) } });
       const dstProblem = coreIdProblem(dstName);
       if (dstProblem != null) return next(errors.invalidParametersFormat(dstProblem));
       const { getPlatform } = require('platform');
@@ -340,6 +342,7 @@ export default function (expressApp: ExpressApp, app: App) {
       // The external ids held on the source core follow its accounts.
       const externalIds = await platform.moveCoreRows('ext-id/', srcName, dstName);
 
+      setRouteAct(res, { result: { count, externalIds } });
       res.json({ count, externalIds });
     } catch (err) {
       next(err);
@@ -369,13 +372,15 @@ export default function (expressApp: ExpressApp, app: App) {
    * Query params: count (an integer from 1 to MAX_INVITATIONS_PER_CALL,
    * default 1), message (optional description).
    */
-  expressApp.get('/reg/admin/invitations/post', checkAdmin, unlessLocked('invitations'), async (req: Request, res: Response, next: NextFunction) => {
+  expressApp.get('/reg/admin/invitations/post', checkAdmin, adminKeyAct('system.reg.invitations.create', app.config), adminRoute(), unlessLocked('invitations'), async (req: Request, res: Response, next: NextFunction) => {
     try {
       const count = req.query.count == null || req.query.count === '' ? 1 : Number(req.query.count);
       if (!Number.isInteger(count) || count < 1 || count > MAX_INVITATIONS_PER_CALL) {
         return next(errors.invalidParametersFormat('count must be an integer from 1 to ' + MAX_INVITATIONS_PER_CALL));
       }
       const message = (req.query.message as string) || '';
+      // How many, never the tokens (nor the description: free text).
+      setRouteAct(res, { diff: { count } });
       const { getPlatform } = require('platform');
       const platform = await getPlatform();
       const data = await platform.generateInvitationTokens(count, 'admin', message);
