@@ -22,7 +22,6 @@ const SERIES_PREFIX = 'series:';
 const { isIP } = require('node:net');
 const { lookup: dnsLookup } = require('node:dns/promises');
 const { isRefusedAddress, stripBrackets } = require('./webhooks/destination.ts');
-const { currentPeerSettings } = require('./outbound/peerFetch.ts');
 
 // The version baked into the repo. Captured before any remote merge so we can
 // always report which dictionary is actually in effect.
@@ -90,14 +89,13 @@ async function guardedUrlRefusal (rawUrl: string): Promise<string | null> {
   if (url.protocol !== 'https:') return 'only https is fetched';
   if (url.username !== '' || url.password !== '') return 'credentials in the URL';
   const host = stripBrackets(url.hostname);
-  const allow = currentPeerSettings().allow;
   let addresses: string[];
   try {
     addresses = isIP(host) !== 0 ? [host] : (await dnsLookup(host, { all: true })).map((a: { address: string }) => a.address);
   } catch {
     return 'the host does not resolve';
   }
-  if (addresses.some((a) => isRefusedAddress(a, allow))) return 'the host is a private, loopback or link-local address';
+  if (addresses.some((a) => isRefusedAddress(a))) return 'the host is a private, loopback or link-local address';
   return null;
 }
 
@@ -307,8 +305,8 @@ class TypeRepository {
   //
   // `options.guarded` (a URL from the platform store that is not the core's
   // local value): https only, no credentials, no host resolving to a private,
-  // loopback or link-local address (`cmc.allowedPrivateHosts` excepted), and
-  // no redirect followed.
+  // loopback or link-local address (no exception: a catalogue on a private
+  // network is set in the core's own configuration), and no redirect followed.
   async tryUpdate (sourceURL: string, apiVersion?: string, options: { guarded?: boolean } = {}) {
     function unavailableError (err: unknown): never {
       const e = new Error('Could not update event types from ' +
