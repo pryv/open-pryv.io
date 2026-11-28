@@ -257,7 +257,7 @@ export default function adminStoreConformance (getDB) {
       assert.equal(await roles.claimRole(db, minted.code, { userId: 'cuserlate', now: Date.now() }), null);
       await assert.rejects(roles.mintClaimCode(db, { role: 'owner', scope: 'platform', mintedBy: 'admin-key', now: Date.now(), ttlMs: 25 * HOUR }), /24 h/);
       await assert.rejects(roles.mintClaimCode(db, { role: 'superuser', scope: 'platform', mintedBy: 'admin-key', now: Date.now() }), /unknown role/);
-      await assert.rejects(roles.mintClaimCode(db, { role: 'owner', scope: 'core:x', mintedBy: 'admin-key', now: Date.now() }), /unknown scope/);
+      await assert.rejects(roles.mintClaimCode(db, { role: 'owner', scope: 'galaxy:x', mintedBy: 'admin-key', now: Date.now() }), /unknown scope/);
     });
 
     it('[ADKC15] an ended admin session stays ended: a row written back after the end (a racing renewal) is refused, renewing it fails', async () => {
