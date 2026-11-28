@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Test runs leave no audit records behind
+
+- test-helpers: the end-of-run cleanup (root `afterAll`, sequential runs, skipped with `PRYV_TEST_KEEP_DATA=1`)
+  also removes the audit records of an audit storage that keeps them outside the user directories:
+  `AuditStoragePG.deleteAllTestOnly()` (refused outside `NODE_ENV=test`), the platform trail's included. Records
+  of the removed accounts used to accumulate from run to run (over 100 000 rows after a few suites).
+- Tests: `[AUAB]` removes its 20 000 seeded records; `[PGAS6]` resumes the fill just before its own account
+  instead of rebuilding the index of the whole shared table (it timed out on a table other suites had filled).
+
 ### OAuth review over HTTP, current validation read
 
 - oauth2 `src/clientReview.ts`: `approveClient`, `withdrawReview`, `setClientStatus` and `decidePublisher`,

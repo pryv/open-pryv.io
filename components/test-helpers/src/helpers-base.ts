@@ -347,25 +347,39 @@ function getMochaHooks (isParallelMode = false) {
   }
 
   /**
-   * Removes every account the run leaves behind: repository, platform rows
-   * and user directories. Suites create users in many ways (fixtures,
+   * Removes every account the run leaves behind: repository, platform rows,
+   * user directories (with the SQLite audit files they hold) and the audit
+   * records of an audit storage that keeps them elsewhere (PostgreSQL), the
+   * platform trail's included. Suites create users in many ways (fixtures,
    * dynamic data sets, registrations through a spawned server) and many never
    * remove them; once another component's run wipes the shared platform
    * store, such a user stays in the repository without its platform rows and
-   * the next run fails the integrity hook before its first test.
+   * the next run fails the integrity hook before its first test. Audit
+   * records left behind make every later run slower (a fill of the audit
+   * index walks them all).
    * Sequential runs only (parallel workers own their databases), and only
    * when this run opened the storages. `PRYV_TEST_KEEP_DATA=1` keeps the data
    * for inspection.
    */
   async function removeRunUsers () {
     if (process.env.MOCHA_PARALLEL === '1' || process.env.PRYV_TEST_KEEP_DATA === '1') return;
-    if (require('storages').storageLayer == null) return;
+    const storages = require('storages');
+    if (storages.storageLayer == null) return;
     const { getUsersRepository } = require('business/src/users/index.ts');
     const usersRepository = await getUsersRepository();
     await usersRepository.deleteAll();
     await userLocalDirectory.init();
     for (const userId of await userLocalDirectory.listUserIds()) {
       await userLocalDirectory.deleteUserDirectory(userId);
+    }
+    const auditStorage = storages.auditStorage;
+    if (typeof auditStorage?.deleteAllTestOnly === 'function') {
+      try {
+        await auditStorage.deleteAllTestOnly();
+      } catch (err: unknown) {
+        // Not a failure of the run, but never silent: the next runs inherit them.
+        process.stderr.write(`[run cleanup] audit records not removed: ${(err as Error)?.message ?? err}\n`);
+      }
     }
   }
 

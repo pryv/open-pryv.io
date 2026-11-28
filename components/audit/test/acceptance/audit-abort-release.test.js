@@ -93,6 +93,9 @@ describe('[AUAB] aborted audit queries release their pooled client', function ()
   });
 
   after(async function () {
+    // The seeded rows are this suite's own: removed with the account's whole
+    // trail, or they stay in the shared table after the run.
+    if (userId != null) await audit.storage.deleteUser(userId);
     if (fixtures) await fixtures.clean();
   });
 
