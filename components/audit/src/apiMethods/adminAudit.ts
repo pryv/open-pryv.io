@@ -36,11 +36,15 @@ export const all: readonly string[] = Object.freeze([
   'system.reg.invitations.create',
   'system.reg.records.set',
   'system.reg.records.delete',
+  // Reads of account data with the admin key under /reg (an account's
+  // details, the names of a core's accounts), recorded as system.getUserInfo.
+  'system.reg.users.get',
+  'system.reg.servers.users.list',
   // An administration act, in the acting administrator's own trail (an
   // administrator session whose account is on this core).
   'admin.act',
   // An administrator read the account's data (system.getUserInfo,
-  // system.getAccess), in the account's own trail.
+  // system.getAccess, system.reg.users.get), in the account's own trail.
   'account.readByAdmin',
   // An administrator changed the account's platform fields (system.users.update,
   // system.users.delete), in the account's own trail.
@@ -67,6 +71,8 @@ export const withoutUser: readonly string[] = Object.freeze([
   'system.reg.invitations.create',
   'system.reg.records.set',
   'system.reg.records.delete',
+  'system.reg.users.get',
+  'system.reg.servers.users.list',
   // Declared in ../ApiMethods.ts: an admin read of an account's data goes to
   // the platform trail (and to the account's trail, `account.readByAdmin`).
   'system.getUserInfo',

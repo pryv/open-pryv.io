@@ -47,7 +47,29 @@ const CAPABILITIES: readonly CapabilityDef[] = Object.freeze([
 /** Every capability name this release knows. */
 export const CAPABILITY_NAMES: readonly string[] = Object.freeze(CAPABILITIES.map((c) => c.name));
 
-/** The capabilities this core offers with its configuration. */
+/**
+ * The capabilities this core offers with its configuration: the built-in ones
+ * it offers, then the platform's own (`portal.customCapabilities`).
+ */
 export function offeredCapabilities (config: ConfigReader): string[] {
-  return CAPABILITIES.filter((c) => c.offered == null || c.offered(config)).map((c) => c.name);
+  const builtIn = CAPABILITIES.filter((c) => c.offered == null || c.offered(config)).map((c) => c.name);
+  return [...builtIn, ...customCapabilities(config)];
+}
+
+export type CustomCapabilitiesReport = { problems: Array<{ message: string; path: string[] }>; warnings: string[] };
+
+/**
+ * The capability names of `portal.customCapabilities`, offered to the
+ * platform's own portal modules. None in this release: the key is not read.
+ */
+export function customCapabilities (_config: ConfigReader): string[] {
+  return [];
+}
+
+/**
+ * Problems (the boot refuses them) and warnings of `portal.customCapabilities`
+ * (read by `describeAdminConfig`). Nothing is checked in this release.
+ */
+export function describeCustomCapabilities (_config: ConfigReader): CustomCapabilitiesReport {
+  return { problems: [], warnings: [] };
 }

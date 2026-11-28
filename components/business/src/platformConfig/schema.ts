@@ -90,6 +90,7 @@ const BATCH_5 = 'later batch 5 (custom.systemStreams): own decision';
 const HOSTINGS = 'later: hostings, once the role scopes computed on it are released';
 const NEW_KEYS = 'added to the schema by the change that introduces the key';
 const UNSCHEDULED = 'not scheduled: no batch decided yet';
+const DEVELOPER = 'not scheduled: developer space policy (terms, registration limits), in the configuration files for now';
 const YAML_TOPOLOGY = 'YAML-only by decision: topology, read at boot before the platform store';
 const YAML_PII = 'YAML-only by decision: read before the storages, a change needs a data migration';
 const YAML_OWN_ROWS = 'YAML-only by decision: has its own platform-store rows (bin/observability.js)';
@@ -132,6 +133,7 @@ const GROUPS: ReadonlyArray<[string, readonly string[]]> = [
   [YAML_KEY_SCOPE, ['auth.adminAccessKeyScope']],
   [YAML_CODE, ['custom.dataStores', 'custom.dataStores.*.id', 'custom.dataStores.*.name', 'custom.dataStores.*.path']],
   [YAML_SOURCE, ['serviceInfoUrl']],
+  [DEVELOPER, ['oauth.developerTerms.**', 'oauth.clientRegistration.limits.**']],
   [UNSCHEDULED, [
     'reporting.**', 'storages.contentIndexes.**',
     'auth.usernameChangeLimit', 'auth.trustedApps', 'auth.passwordResetPageURL', 'auth.passwordResetRequestMaxAge',
@@ -142,7 +144,7 @@ const GROUPS: ReadonlyArray<[string, readonly string[]]> = [
     'services.mfa.methods.sms.codeLength', 'services.mfa.methods.sms.codeTtlSeconds', 'services.mfa.methods.sms.sendLimits.**',
     'services.mfa.sessions.**', 'services.mfa.attempts.**', 'services.mfa.allowLoginWhenMethodInactive',
     'account.**', 'accountErasure.ledger.enabled', 'accountErasure.ledger.retentionDays', 'access.returnOrigins',
-    'setup.codeTtlHours', 'setup.registrationWhilePending',
+    'setup.codeTtlHours', 'setup.registrationWhilePending', 'portal.customCapabilities',
     'admin.session.ttlMinutes', 'admin.session.stepUpMinutes', 'admin.session.requireMfa',
     'audit.onUserDelete',
     'oauth.**', 'sharedSecrets.**', 'delegation.**', 'cmc.**'

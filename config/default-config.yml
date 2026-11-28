@@ -1124,6 +1124,9 @@ portal:
   # modules:
   #   disabled: []                  # portal module ids switched off
   #   order: []                     # portal module ids listed first, in this order
+  # `customCapabilities`: capability names (x-<name>) this platform offers to portal modules
+  # of its own, in addition to the built-in ones. Not acted on in this release.
+  customCapabilities: []
 
 # === MIXED: platform setup (first administrator) ===
 # A fresh platform waits for its first administrator: the first core that boots prints a
@@ -1277,6 +1280,14 @@ platform:
   # PER-CORE: how often (seconds) each process checks the platform store for a change of
   # the platform-wide configuration held there.
   configPollSeconds: 15
+  # PER-CORE: how this core uses the platform-wide configuration held in the platform store
+  # (read from this core's files only, never from the store).
+  # - `ignore`: true: this core loads no value from the store and keeps its files' values.
+  # - `localOnly`: configuration keys this core always takes from its own files.
+  # Not acted on in this release: the defaults below change nothing.
+  configStore:
+    ignore: false
+    localOnly: []
 
 # === MIXED ===
 # `enabled` + `email` + `atRestKey` are PLATFORM-WIDE (every core must agree);
@@ -1362,8 +1373,10 @@ audit:
   # read with GET /system/admin/audit or `bin/admin.js audit tail`): which of
   # them are stored, among those `storage.filter` selects. "admin-acts" (the
   # default): the administration acts (`system.*` methods and routes, the
-  # acts of bin/admin.js, admin-key writes under /reg, an account erased with
-  # the admin key), not the refused setup-code tries nor refused deletions.
+  # acts of bin/admin.js, admin-key writes and reads of account data under
+  # /reg, an account erased with the admin key), not the refusals anyone can
+  # cause (setup-code tries, deletions, administrator session and claim-code
+  # requests with a personal token).
   # Public traffic without an account (auth.register, auth.emailChallenge,
   # oauth.*, sso.refused, mfa.recover, an account erased by its holder) stays
   # in syslog unless named here, e.g. include: ['admin-acts',
@@ -1473,6 +1486,17 @@ oauth:
     #   nonValidated:       { consent: testers, scopeTemplate: '<scope>', maxGrants: 100 }   # allow | testers | refuse
     #   publisherValidated: { consent: allow }
     #   appValidated:       { consent: allow }
+    # Limits on what one account registers in mode delegated (per account: applications held,
+    # applications created per day). Not acted on in this release.
+    limits:
+      appsPerAccount: 20
+      creationsPerDay: 5
+  # Terms a developer accepts before registering applications in mode delegated: the page
+  # (`url`) and its `version` (a new version is accepted again). null: no terms.
+  # Platform-wide. Not acted on in this release.
+  developerTerms:
+    url: null
+    version: null
   # Hosts the consent screen may load a client's logo from (`logo_uri`, https
   # only; `host` or `host:port`). Registration refuses a logo elsewhere and the
   # consent offer leaves out a stored one that is not (any more) listed. Empty:

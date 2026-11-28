@@ -10,6 +10,8 @@ import { isSha256Hex } from './codes.ts';
 import { portalUrl as portalAddress, PORTAL_SPACES, PORTAL_CONTRACT } from './portalDefaults.ts';
 import { describeLocalPolicy } from './localPolicy.ts';
 import { describeLockdown } from './lockdown.ts';
+import { describeCustomCapabilities } from './capabilities.ts';
+import { describeConfigStore } from '../platformConfig/localSwitch.ts';
 
 /**
  * Configuration of setup and administration:
@@ -22,6 +24,7 @@ import { describeLockdown } from './lockdown.ts';
  *   portal.spaces                   PLATFORM-WIDE  portal spaces offered ([admin, developer])
  *   portal.modules.disabled         PLATFORM-WIDE  portal module ids switched off ([])
  *   portal.modules.order            PLATFORM-WIDE  portal module ids listed first, in this order ([])
+ *   portal.customCapabilities       PLATFORM-WIDE  the platform's own capability names (validated by capabilities.ts)
  *   setup.codeTtlHours              PLATFORM-WIDE  lifetime of a setup code (24)
  *   setup.codeHash                  BOOTSTRAP      SHA-256 of an operator-supplied setup code (null)
  *   setup.printCode                 PER-CORE       print the setup code block at boot (true)
@@ -32,6 +35,8 @@ import { describeLockdown } from './lockdown.ts';
  *   admin.session.requireMfa        PLATFORM-WIDE  administrators need MFA whenever the platform has it on (true)
  *   admin.localPolicy               PER-CORE       grants this core accepts (validated by localPolicy.ts)
  *   admin.lockdown                  PER-CORE       what this core locks (validated by lockdown.ts)
+ *   platform.configStore            PER-CORE       this core's use of the platform store (validated by
+ *                                                  ../platformConfig/localSwitch.ts)
  *
  * One validator for the boot-time config validation, `bin/check-config.js`
  * and the readers. Pure: reads the values it is given.
@@ -211,9 +216,10 @@ export function describeAdminConfig (config: ConfigReader): AdminConfigReport {
   const requireMfa = asBoolean(config.get('admin:session:requireMfa'), true);
   if (requireMfa == null) problem('admin.session.requireMfa', 'must be true or false');
 
-  // admin.localPolicy, admin.lockdown: their own validators.
+  // admin.localPolicy, admin.lockdown, portal.customCapabilities,
+  // platform.configStore: their own validators.
   const warnings: string[] = [];
-  for (const report of [describeLocalPolicy(config), describeLockdown(config)]) {
+  for (const report of [describeLocalPolicy(config), describeLockdown(config), describeCustomCapabilities(config), describeConfigStore(config)]) {
     problems.push(...report.problems);
     warnings.push(...report.warnings);
   }

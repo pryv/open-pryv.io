@@ -761,4 +761,5 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
   require('./system-admin-audit.ts').default(expressApp, app);
   require('./system-admin-config.ts').default(expressApp, app);
   require('./system-admin-oauth.ts').default(expressApp, app);
+  require('./system-admin-ops.ts').default(expressApp, app);
 }

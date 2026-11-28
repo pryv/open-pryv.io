@@ -204,6 +204,45 @@ export default function conformanceTests (getStorage, getUserId, cleanupFn, engi
           });
         });
 
+        // Its own accounts: it runs alone as well as after the tests above.
+        describe('importAllEvents() of rows naming another account', () => {
+          const { PLATFORM_TRAIL_USER_ID } = require('../AuditStorage.ts');
+          let ownUserId, otherUserId, ownDb;
+
+          before(async () => {
+            ownUserId = getUserId() + '-aaimu';
+            otherUserId = getUserId() + '-aaimo';
+            ownDb = await storage.forUser(ownUserId);
+            await ownDb.createEvent({ id: 'aaimu-seed', streamIds: ['sq-stream-1'], type: 'test/test', time: 5000, created: 5000, createdBy: 'test', modified: 5000, modifiedBy: 'test' });
+          });
+
+          after(async () => {
+            if (cleanupFn) { await cleanupFn(ownUserId); await cleanupFn(otherUserId); }
+          });
+
+          // Mutation caught: a row written under the `user_id` it carries (a
+          // crafted backup writing into the platform trail or another account's trail).
+          it('[AAIMU] importAllEvents() writes every row in the trail it is called on, whatever user id a row names', async () => {
+            const [seed] = (await ownDb.exportAllEvents()).filter((r) => r.eventid === 'aaimu-seed');
+            assert.ok(seed != null, 'the row set up for this test');
+            // A user id on the row where the engine's rows carry one (a database of all accounts).
+            const naming = (eventid, userId) => Object.assign({}, seed, { eventid }, 'user_id' in seed ? { user_id: userId } : {});
+            const countBefore = await ownDb.countEvents();
+            await ownDb.importAllEvents([naming('aaimu-trail', PLATFORM_TRAIL_USER_ID), naming('aaimu-other', otherUserId)]);
+            assert.strictEqual(await ownDb.countEvents(), countBefore + 2, 'both rows in this trail');
+            assert.ok(await ownDb.getOneEvent('aaimu-trail') != null);
+            assert.ok(await ownDb.getOneEvent('aaimu-other') != null);
+            const otherDb = await storage.forUser(otherUserId);
+            assert.strictEqual(await otherDb.getOneEvent('aaimu-other'), null, 'nothing in the other account\'s trail');
+            if (storage.acceptsPlatformTrail?.() === true) {
+              const trail = await storage.forUser(PLATFORM_TRAIL_USER_ID);
+              const leaked = await trail.getOneEvent('aaimu-trail');
+              if (leaked != null && engineHooks.removePlatformTrailRows) await engineHooks.removePlatformTrailRows(storage, ['aaimu-trail']);
+              assert.strictEqual(leaked, null, 'nothing in the platform trail');
+            }
+          });
+        });
+
         it('[SQ15] importAllEvents() with empty array must be a no-op', async () => {
           const countBefore = await userDb.countEvents();
           await userDb.importAllEvents([]);

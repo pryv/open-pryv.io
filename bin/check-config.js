@@ -564,7 +564,8 @@ try {
 
 // Setup and administration keys (portal.site names a configured hosted site,
 // setup.*, auth.adminAccessKeyScope, admin.session.*, admin.localPolicy,
-// admin.lockdown): the boot-time rule.
+// admin.lockdown, portal.customCapabilities, platform.configStore): the
+// boot-time rule.
 try {
   const { describeAdminConfig } = require('../components/business/src/admin/config.ts');
   const report = describeAdminConfig(configReader);
@@ -695,6 +696,15 @@ if (!isMissingOrSentinel(get('access.defaultAuthUrl')) && isMissingOrSentinel(ge
   const report = describeClientRegistrationConfig(get('oauth.clientRegistration'),
     { extensionInstalled: typeof ext === 'string' && ext.trim() !== '' });
   for (const p of report.problems) problems.push(p);
+  for (const w of report.warnings) warnings.push(w);
+}
+
+// The developer space settings (oauth.developerTerms,
+// oauth.clientRegistration.limits): the same check as the boot.
+{
+  const { describeDeveloperConfig } = require('../components/oauth2/src/developer/config.ts');
+  const report = describeDeveloperConfig(configReader);
+  for (const p of report.problems) problems.push(p.message);
   for (const w of report.warnings) warnings.push(w);
 }
 

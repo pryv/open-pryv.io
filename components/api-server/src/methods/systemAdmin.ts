@@ -15,7 +15,7 @@ import {
   readSetupState, redeemSetupCode, countSetupAttempt, pendingSetupCode, mintSetupCode, markReady
 } from 'business/src/admin/setupState.ts';
 import {
-  createSetupSession, endSetupSession, createAdminSession, endAdminSession, renewAdminSession, isStepUpFresh, mfaSignInAt
+  createSetupSession, endSetupSession, createAdminSession, endAdminSession, renewAdminSession, isStepUpFresh, mfaSignInAt, countSessionRefusal
 } from 'business/src/admin/sessions.ts';
 import type { LocalKv } from 'business/src/admin/sessions.ts';
 import {
@@ -33,6 +33,7 @@ import { offeredCapabilities } from 'business/src/admin/capabilities.ts';
 import { lockdownView, withoutHiddenCapabilities } from 'business/src/admin/lockdown.ts';
 import { policyView, readLocalPolicy } from 'business/src/admin/localPolicy.ts';
 import { setupChecks } from 'business/src/admin/setupChecks.ts';
+import { developerView } from 'oauth2/src/developer/config.ts';
 import { factory as errors } from 'errors';
 import { ready, getLogger } from '@pryv/boiler';
 import { getUsersRepository } from 'business/src/users/index.ts';
@@ -193,8 +194,9 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
     wrap(async (context, _params, result) => {
       const personal = personalOf(context);
       const now = Date.now();
-      if (adminMfaRequired(config) && await factorTimeOf(personal) == null) return mfaMissing();
+      // Named first: a refusal is found by `target` too.
       setAuditDetails(context, { target: { userId: personal.userId }, diff: { role: ROLE_OWNER, scope: SCOPE_PLATFORM } });
+      if (adminMfaRequired(config) && await factorTimeOf(personal) == null) return mfaMissing();
       const row = await grantRole(store(), personal.userId, { role: ROLE_OWNER, scope: SCOPE_PLATFORM, grantedBy: 'setup', via: 'setup', now });
       result.role = rolePayload(personal.userId, row);
       await auditAdminAct(personal.userId, 'admin.role.created', { role: ROLE_OWNER, scope: SCOPE_PLATFORM, via: 'setup' });
@@ -236,19 +238,26 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
     wrap(async (context, _params, result) => {
       const personal = personalOf(context);
       const db = store();
-      if ((await readSetupState(db))?.state === 'pending') {
-        return errors.invalidOperation('Setup is not finished: administrator sessions open once it is (use the setup session meanwhile).');
-      }
       const now = Date.now();
+      // Any account's personal token reaches this method: its refusals are
+      // counted per account (429 past the budget), accepted calls are not.
+      const refused = async (err: unknown) => {
+        const counted = await countSessionRefusal(db, { userId: personal.userId, now });
+        if (counted.allowed) return err;
+        return errors.tooManyRequests('Too many refused administrator session requests for this account: retry later.', Math.max(1, Math.ceil((counted.retryAt - now) / 1000)));
+      };
+      if ((await readSetupState(db))?.state === 'pending') {
+        return await refused(errors.invalidOperation('Setup is not finished: administrator sessions open once it is (use the setup session meanwhile).'));
+      }
       const role = await readRoleRow(db, personal.userId);
       // Any active grant opens a session, whatever it gives on this core (a
       // grant scoped to another core, a local policy refusing it); the answer
       // lists what it gives here and what it does not.
-      if (!hasActiveGrant(role, now)) return errors.unknownResource();
+      if (!hasActiveGrant(role, now)) return await refused(errors.unknownResource());
       const { permissions, denied } = effectivePermissions(role, now,
         { core: coreContext(config), policy: readLocalPolicy(config), userId: personal.userId });
       const factorAt = await factorTimeOf(personal);
-      if (adminMfaRequired(config) && factorAt == null) return mfaMissing();
+      if (adminMfaRequired(config) && factorAt == null) return await refused(mfaMissing());
       const cfg = readAdminConfig(config);
       const session = await createAdminSession(db, { userId: personal.userId, homeCore: coreId(), mfaAt: factorAt, now, ttlMs: cfg.session.ttlMs });
       result.adminSession = {
@@ -358,6 +367,8 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
       const personal = personalOf(context);
       const db = store();
       const now = Date.now();
+      // Named first: a refusal is found by `target` too.
+      setAuditDetails(context, { target: { userId: personal.userId } });
       const attempt = await countClaimAttempt(db, { userId: personal.userId, now });
       if (!attempt.allowed) {
         return errors.tooManyRequests('Too many administrator code attempts for this account: retry later.', Math.max(1, Math.ceil((attempt.retryAt - now) / 1000)));
@@ -394,7 +405,8 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
       if (typeof userId !== 'string' || !/^[A-Za-z0-9._-]{1,128}$/.test(userId)) return errors.unknownResource('role');
       if (role != null && typeof role !== 'string') return errors.invalidParametersFormat('`role` must be a string.');
       if (scope != null && typeof scope !== 'string') return errors.invalidParametersFormat('`scope` must be a string.');
-      setAuditDetails(context, { target: { userId }, diff: { role: role ?? null, scope: scope ?? null } });
+      // Recorded as given only when they are a role and a scope (any other text is not kept).
+      setAuditDetails(context, { target: { userId }, diff: { role: role != null && isRole(role) ? role : null, scope: scope != null && isScope(scope) ? scope : null } });
       let revoked: boolean;
       try {
         revoked = await revokeRole(store(), userId, { role: role as string | undefined, scope: scope as string | undefined, now: Date.now() });
@@ -410,11 +422,12 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
 
   // ------------------------------------------------------------ portal
 
-  // Public: what the portal shows on this platform (spaces, modules), from `portal.*`.
+  // Public: what the portal shows on this platform (spaces, modules), from
+  // `portal.*`, and what the developer space adds (oauth2/src/developer/config.ts).
   systemAPI.register('system.portalSettings.get',
     auditAs('public'),
     wrap(async (_context, _params, result) => {
-      Object.assign(result, portalSettings(config));
+      Object.assign(result, portalSettings(config), developerView(config));
     }));
 
   systemAPI.register('system.portalContext.get',

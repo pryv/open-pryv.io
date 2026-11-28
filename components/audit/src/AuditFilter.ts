@@ -38,12 +38,13 @@ export const ADMIN_ACTS = 'admin-acts';
 const PLATFORM_TRAIL_BASE: string[] = AUDITED_METHODS.filter((m: string) => WITHOUT_USER_METHODS.includes(m));
 export const ADMIN_ACT_METHODS: readonly string[] = Object.freeze(PLATFORM_TRAIL_BASE.filter((m) => m.startsWith('system.') || m.startsWith('admin.') || ADMIN_SUBJECT_METHODS.includes(m)));
 /**
- * Administration ids an unauthenticated caller can reach (a setup code tried,
- * an account deletion without a credential): selected through `admin-acts`,
- * only their done calls are kept in the platform trail; naming them (or
- * `all`) keeps their refusals too.
+ * Administration ids a caller who is not an administrator can reach (a setup
+ * code tried, an account deletion without a credential, an administrator
+ * session or a claim code asked with any account's personal token): selected
+ * through `admin-acts`, only their done calls are kept in the platform trail;
+ * naming them (or `all`) keeps their refusals too.
  */
-export const PUBLIC_REFUSAL_METHODS: readonly string[] = Object.freeze(['system.setup.createSession', 'auth.delete']);
+export const PUBLIC_REFUSAL_METHODS: readonly string[] = Object.freeze(['system.setup.createSession', 'auth.delete', 'system.adminSession.create', 'system.roles.claim']);
 /** The subjects (`content.record.subject.via`) of an administrator. */
 export const ADMIN_SUBJECT_VIAS: readonly string[] = Object.freeze(['admin-key', 'session', 'setup']);
 export const DEFAULT_PLATFORM_TRAIL_FILTER: FilterParam = Object.freeze({ methods: Object.freeze({ include: [ADMIN_ACTS], exclude: [] }) }) as FilterParam;

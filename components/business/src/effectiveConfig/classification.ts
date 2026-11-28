@@ -199,6 +199,7 @@ const RULE_TABLE: Array<[string, RuleClass, RuleScope]> = [
   ['portal.spaces', P, p],
   ['portal.modules.disabled', P, p],
   ['portal.modules.order', P, p],
+  ['portal.customCapabilities', P, p],
   ['setup.codeTtlHours', P, p],
   // The hash of a high-entropy code cannot give the code back; still not shown.
   ['setup.codeHash', S, c],
@@ -225,6 +226,9 @@ const RULE_TABLE: Array<[string, RuleClass, RuleScope]> = [
   ['platform.piiAlgorithm', P, p],
   ['platform.piiHmacKey', S, p],
   ['platform.configPollSeconds', P, c],
+  // Each core decides for itself how it uses the platform store.
+  ['platform.configStore.ignore', P, c],
+  ['platform.configStore.localOnly', P, c],
 
   ['letsEncrypt.enabled', P, p],
   ['letsEncrypt.email', P, p],
@@ -279,6 +283,10 @@ const RULE_TABLE: Array<[string, RuleClass, RuleScope]> = [
   ['oauth.clientRevokeCheckSeconds', P, p],
   ['oauth.clientRegistration.mode', P, p],
   ['oauth.clientRegistration.**', P, p],
+  ['oauth.clientRegistration.limits.appsPerAccount', P, p],
+  ['oauth.clientRegistration.limits.creationsPerDay', P, p],
+  ['oauth.developerTerms.url', P, p],
+  ['oauth.developerTerms.version', P, p],
   ['oauth.logoHosts', P, p],
   ['oauth.stateKey', S, c],
   ['oauth.signingKeys', P, c],

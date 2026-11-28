@@ -596,6 +596,14 @@ function checkClientMetadataDocuments (config, problems) {
   }
 }
 
+// The developer space settings: oauth.developerTerms, oauth.clientRegistration.limits.
+function checkDeveloperConfig (config, problems) {
+  const { describeDeveloperConfig } = require('../../components/oauth2/src/developer/config.ts');
+  for (const p of describeDeveloperConfig(config).problems) {
+    problems.push({ message: p.message, path: p.path, payload: {} });
+  }
+}
+
 // http.trustedProxies: every entry must compile (IP, CIDR or a proxy-addr name).
 function checkTrustedProxies (config, problems) {
   const { checkTrustedProxiesConfig } = require('../../components/middleware/src/clientIp.ts');
@@ -820,6 +828,7 @@ async function validate (config) {
   checkAudienceBoundSessions(config, problems);
   checkPerUserIssuer(config, problems);
   checkClientMetadataDocuments(config, problems);
+  checkDeveloperConfig(config, problems);
 
   return problems;
 }
@@ -989,6 +998,8 @@ function collectWarnings (config) {
   warnings.push(...oauthWarnings(config));
   const { describeClientMetadataConfig } = require('../../components/oauth2/src/clientMetadataConfig.ts');
   warnings.push(...describeClientMetadataConfig(config.get('oauth:clientMetadataDocuments')).warnings);
+  const { describeDeveloperConfig } = require('../../components/oauth2/src/developer/config.ts');
+  warnings.push(...describeDeveloperConfig(config).warnings);
   warnings.push(...ssoWarnings(config));
   const { describePasswordCheckLimit } = require('../../components/business/src/auth/passwordCheckLimit.ts');
   warnings.push(...describePasswordCheckLimit(config.get('auth')).warnings);
@@ -1158,6 +1169,7 @@ module.exports = {
   checkAdminConfig,
   checkAdapterRoutes,
   checkClientMetadataDocuments,
+  checkDeveloperConfig,
   checkTrustedProxies,
   checkIntegrityAlgorithm,
   checkAutoDeletion,

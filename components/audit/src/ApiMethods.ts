@@ -9,13 +9,15 @@ import * as adminRoles from './apiMethods/adminRoles.ts';
 import * as adminAudit from './apiMethods/adminAudit.ts';
 import * as platformConfig from './apiMethods/platformConfig.ts';
 import * as adminOauth from './apiMethods/adminOauth.ts';
+import * as adminOps from './apiMethods/adminOps.ts';
+import * as oauthApps from './apiMethods/oauthApps.ts';
 
 /**
  * Areas that declare their method ids in their own file (apiMethods/), joined
  * into the three lists below: new ids of those areas go there, not here.
  */
 const AREAS: ReadonlyArray<{ all: readonly string[]; notAudited: readonly string[]; withoutUser: readonly string[] }> =
-  [adminRoles, adminAudit, platformConfig, adminOauth];
+  [adminRoles, adminAudit, platformConfig, adminOauth, adminOps, oauthApps];
 
 const ALL_METHODS = [
   'getAccessInfo',

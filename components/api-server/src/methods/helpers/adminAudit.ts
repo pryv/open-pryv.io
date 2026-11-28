@@ -45,6 +45,8 @@ export type AdminAuditContext = {
   access?: { id?: string } | null;
   auditIntegrityPayload?: unknown;
   auditErrorRecorded?: boolean;
+  /** The account id of the recorded target, being looked up (see `setAuditDetails`). */
+  auditTargetPending?: Promise<void>;
 };
 
 /** What a record names as the object of an act: an account, an access, a namespace, a core... (never a secret). */
@@ -141,13 +143,27 @@ export function auditAs (kind: 'subject' | 'personal' | 'public') {
   };
 }
 
-/** Adds to the record prepared by `auditAs` (or `adminRoute`) what the act was on, and what it changed. */
-export function setAuditDetails (context: AdminAuditContext, details: { target?: AdminTarget; diff?: Record<string, unknown>; result?: Record<string, unknown> }): void {
+/**
+ * Adds to the record prepared by `auditAs` (or `adminRoute`) what the act was
+ * on, and what it changed. A target naming a username without its account id
+ * gets the id once looked up (`auditTargetPending`, awaited by the error
+ * middleware before it records a refusal), as `auditTarget` gives it.
+ */
+export function setAuditDetails (context: AdminAuditContext, details: { target?: AdminTarget; diff?: Record<string, unknown>; result?: Record<string, unknown> }, opts: { lookUpAccount?: boolean } = {}): void {
   const payload = context.auditIntegrityPayload;
   if (payload == null || typeof payload !== 'object' || !('subject' in payload)) return;
   const record = payload as AdminRecord;
   // No username in clear in a record: its keyed hash (and the account id where the caller knows it).
-  if (details.target != null) record.target = scrubAccountNames(details.target);
+  if (details.target != null) {
+    const scrubbed = scrubAccountNames(details.target);
+    record.target = scrubbed;
+    const name = details.target.username;
+    if (opts.lookUpAccount !== false && details.target.userId == null && typeof name === 'string' && name !== '') {
+      context.auditTargetPending = withAccountId(details.target).then((t) => {
+        if (t?.userId != null && record.target === scrubbed) record.target = scrubAccountNames(t);
+      }, () => {});
+    }
+  }
   if (details.diff != null) record.diff = scrubAccountNames(details.diff);
   if (details.result != null) record.result = details.result;
 }
@@ -161,7 +177,7 @@ export function auditTarget<P> (targetOf: (params: P) => AdminTarget | null) {
   return async function setAuditTarget (context: AdminAuditContext, params: P, _result: ResultBag, next: Next) {
     try {
       const target = targetOf(params ?? ({} as P));
-      if (target != null) setAuditDetails(context, { target: await withAccountId(target) });
+      if (target != null) setAuditDetails(context, { target: await withAccountId(target) }, { lookUpAccount: false });
     } catch (err) {
       getLogger('system-admin').error('administration audit target not resolved', err);
     }
@@ -206,7 +222,7 @@ export async function recordAdminAct (context: AdminAuditContext & Record<string
       context.access = { id: accessId };
       context.auditIntegrityPayload = { subject };
     }
-    setAuditDetails(context, details);
+    setAuditDetails(context, details, { lookUpAccount: false });
     context.methodId = methodId;
     const auditSingleton = (await import('audit')).default;
     if (outcome === 'valid') {
@@ -277,9 +293,13 @@ export function adminRoute (opts: { recordRefusals?: boolean } = {}) {
  * record written once the answer is sent, and set on the prepared record so
  * that an error the error middleware records keeps it too.
  */
-export function setRouteAct (res: Response, details: { target?: AdminTarget; diff?: Record<string, unknown>; result?: Record<string, unknown> }): void {
+export function setRouteAct (res: Response, details: AdminActDetails): void {
   res.locals.adminAct = Object.assign({}, res.locals.adminAct, details);
-  if (res.locals.adminContext != null) setAuditDetails(res.locals.adminContext, { target: details.target, diff: details.diff });
+  const act = res.locals.adminAct as AdminActDetails;
+  if (res.locals.adminContext != null && (details.target != null || details.diff != null || details.targetUserId != null)) {
+    const target = act.target != null && act.target.userId == null && act.targetUserId != null ? { userId: act.targetUserId, ...act.target } : act.target;
+    setAuditDetails(res.locals.adminContext, { target, diff: act.diff });
+  }
 }
 
 const NO_TRACING = Object.freeze({ startSpan () {}, finishSpan () {}, logForSpan () {} });
