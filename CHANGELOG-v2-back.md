@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### OAuth review over HTTP, current validation read
+
+- oauth2 `src/clientReview.ts`: `approveClient`, `withdrawReview`, `setClientStatus` and `decidePublisher`,
+  compare-and-set updates of the client / publisher row with a `statusLog` entry (reviewer note kept), shared by the
+  HTTP routes and `bin/oauth-client.js`. Review acts answer `invalid-row` (400) for a row the registration rules now
+  refuse (was a 500); the client view drops a legacy account username.
+- api-server `/system/admin/oauth` routes filter every row through `scopeCoversRegions` over the caller's
+  replicated grants holding the route's permission (local grants never count).
+- oauth2 `src/routes/clientsValidation.ts` (`POST /oauth2/clients/validation`), mounted only when the host wires
+  `listHeldClientIds` (the api-server does); the session branch of the held-clients rule requires `type: app`.
+- Tests: `[OCRV]`, `[ADMO]`, `[OCLR]`, `[OCURA]` and the oauth2 `clientsValidation` / `clientReview` units.
+
 ### Platform-wide configuration in the platform store, lockdown
 
 - boiler: a `platform-store` scope right below `memory`, above override-config.yml, bootstrap-config.yml, the

@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+### OAuth: app review and publisher decisions over HTTP
+
+- **`/system/admin/oauth`** serves the review acts of `bin/oauth-client.js` and the publisher decisions, for the
+  administration portal and scripts (`docs/oauth2.md` § 3d): `GET clients` (`?queue=true&origin=&status=`),
+  `GET clients/:clientId`, `POST clients/:clientId/approve` `{ digest, reason? }`, `unvalidate` `{ reason }`,
+  `suspend` `{ reason }`, `resume` `{ reason? }`; `GET publishers` (`?status=`), `GET publishers/:userId`,
+  `PUT publishers/:userId` `{ status, displayName?, regions?, reason }`. Permissions `oauthClients:read|review`
+  and `publishers:read|review` (role `app-reviewer`; `operator`, `auditor` and `viewer` hold the reads). An
+  administrator session or the admin key in scope `full` (refused under `break-glass`); no second factor.
+- **Region rule, reads included:** these permissions come only from grants at scope `platform` or `region:<r>`;
+  a grant at `region:<r>` reaches a row whose `regions` are all `r`, a row with no `regions` needs `platform`. A
+  row out of reach answers 404, as a missing one. A reviewer scoped to a region decides only the publisher rows
+  assigned to its region; creating a publisher row needs scope `platform`.
+- `approve` takes the review digest the reviewer read: `409 stale-resource` without the current digest, and the
+  answer does not give the new one (read the client again). A row the registration rules now refuse answers
+  `400 invalid-row` on `approve` and `unvalidate`. The two lists take `limit` (1 to 1000) and `skip`.
+- Answers never carry a secret hash; a capability URL's token is masked.
+- Each act is recorded in the core's platform trail, in the acting administrator's trail and, when that account is
+  on this core, in the client owner's (`oauth.client.reviewed`) or publisher's (`oauth.publisher.reviewed`) trail.
+  The client owner's / publisher's own trail names the actor `platform-administrator` and carries the reviewer's
+  reason.
+- `bin/oauth-client.js` `validate`, `unvalidate`, `suspend` and `resume` use the same code; the row's `statusLog`
+  now records the CLI as `cli:<OS user>`. A publisher row gains `regions`, `statusLog` and `updatedAt` (older rows
+  still read).
+
+### OAuth: current validation of the apps an account granted
+
+- **`POST /oauth2/clients/validation`** `{ clientIds }` (at most 50), with the account's personal token: the
+  current `validation` block (`level`, `publisher`, `validatedAt`) and `served` of each app the account granted,
+  for the account app's list of connected apps (`docs/oauth2.md` § 1d). An app counts as granted only through the
+  server-owned stamps: a consent grant's `grantOf`, or an `app` session `oauth:<id>` carrying its `dataGrantId`.
+  Ids not held are left out. Delegated tokens 403; another core's account 421 `wrong_core`. Not audited.
+
 ### Platform-wide configuration held in the platform store: the service information (operator notice)
 
 - The service information can be set once for the whole platform, through the API (and so the portal):

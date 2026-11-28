@@ -823,6 +823,28 @@ never on the wording; render errors without one generically.
   `clientData.oauth`, and `accesses.update` refuses any change to it
   (`403 forbidden`); sending it back unchanged passes.
 
+### Current validation of the apps an account granted
+
+An account app shows, for each app the account granted, the badge the consent
+screen would show now: `POST /oauth2/clients/validation`, signed in with the
+account's personal token (`username` + `userToken` in the body, or the token in
+the `Authorization` header), body `{ "clientIds": [...] }` (at most 50 stored
+client ids). It answers
+`{ "clients": { "<clientId>": { level, publisher?, validatedAt?, served } } }`
+(the `validation` block of the consent offer, plus `served: false` when the
+client is refused now: suspended, under review, not served in this region,
+a developer client under `mode: curated`, or its level's policy is `refuse`).
+
+- Only the clients the account's accesses were minted for are answered, told
+  by the server-owned stamps of `clientData.oauth` alone: a consent grant's
+  `grantOf`, or an `app` session `oauth:<id>` carrying its `dataGrantId`;
+  never an access name the account chose. Unknown, removed and not-held ids
+  are all left out: the route does not reveal which clients exist.
+- A token obtained through account delegation is refused (`403`), an expired
+  personal token too (`401`); an account served by another core answers
+  `421 wrong_core` with that core's URL. Same CORS as the rest of the OAuth
+  surface. The read is not audited.
+
 ---
 
 ## 1e. Token exchange (RFC 8693) for resource servers
