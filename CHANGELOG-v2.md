@@ -89,6 +89,32 @@
   - Grants, revocations, claim codes (role, scope and lifetime, never the code), claims and the first
     administrator name the account and the role and scope in their platform-trail record, also when the act is
     refused.
+  - An account erased with the admin key (`DELETE /users/:username`, `auth.delete`) is an administration act: kept
+    by default (`admin-acts`), done calls only, with `subject: { via: 'admin-key' }` and `target: { userId,
+    usernameHash }`. A deletion by the account's holder, and a refused deletion, stay in syslog unless
+    `audit.platformTrail.filter` names `auth.delete`.
+  - The acts of `bin/admin.js` (`roles grant` / `revoke`, `sessions revoke`, `claim-code`, `setup-code --new`,
+    `setup finish`) are recorded in the platform trail too (ids `admin.cli.role.granted`, `admin.cli.role.deleted`,
+    `admin.cli.sessions.revoked`, `admin.cli.claimCode.created`, `admin.cli.setupCode.replaced`,
+    `admin.cli.setup.finished`), with `subject: { via: 'cli', osUser }`, the account by id and the role and scope;
+    never a code. `GET /system/admin/audit` takes `subject=cli`.
+  - The admin-key writes under `/reg` are recorded as administration acts, done or refused:
+    `GET /reg/admin/servers/:src/rename/:dst` (`system.reg.servers.rename`: both core ids, the number of accounts
+    and external ids moved), `GET /reg/admin/invitations/post` (`system.reg.invitations.create`: how many, never a
+    token nor the description), `POST /reg/records` and `DELETE /reg/records/:subdomain` (`system.reg.records.set` /
+    `.delete`: the name and the kinds of record, not their values).
+  - **Whatever selected a record** (including public ids opted in through `audit.platformTrail.filter`), the stored
+    copy holds no username and no error message in clear: `content.message` is dropped (it may quote the input, a
+    username or an email; `content.id` says what was refused; the `HTTP <status>` of a refused handler route is
+    kept), and usernames in `content.query`, the record's `target` and `diff` and the delegation stamp become their
+    keyed hash. Syslog keeps the record as before. An opted-in public record keeps the caller's IP address.
+  - Next to each keyed hash, a record part holds **`hashKeyId`**, the id of the key that made it (the erasure
+    ledger's `keyId`): records made before and after a key change (an explicit `accountErasure.ledger.hmacKey` set,
+    or the admin key rotated without one) are told apart. Set `accountErasure.ledger.hmacKey` explicitly to keep the
+    hashes stable across an admin key rotation.
+  - A filtered read of `GET /system/admin/audit` stopped by the scan limit (`scanLimitReached: true`) also answers
+    **`scannedToTime`**, the time of the last record scanned: continue with `toTime` = that value and `skip: 0`.
+    `toTime` is inclusive, so records sharing that time come again: drop by `id` those already read.
   - **Upgrade note:** the administration acts, which reached syslog only, are now also stored: audit storage grows
     with administration traffic (public traffic is not stored unless `audit.platformTrail.filter` names it). There
     is no retention of the platform trail in this release (as for every audit trail). The platform trail is not part of an account

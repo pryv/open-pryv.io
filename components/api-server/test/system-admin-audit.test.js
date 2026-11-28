@@ -95,6 +95,8 @@ describe('[SYAU] platform trail, attribution, trail read and users paging', func
     const { ledgerKey, usernameHash } = require('business/src/erasureLedger/index.ts');
     return usernameHash(ledgerKey(require('@pryv/boiler').getConfigSync()), name);
   };
+  /** The id of the key the hashes are made with, recorded next to them. */
+  const hashKeyId = () => require('business/src/erasureLedger/index.ts').ledgerKey(require('@pryv/boiler').getConfigSync()).keyId;
 
   it('[SYAU1] a call made with the admin key is recorded under `admin`, one made with an administrator session under `admin-session` with the account, its grant and the actor\'s own trail', async () => {
     const target = await freshUser();
@@ -106,7 +108,7 @@ describe('[SYAU] platform trail, attribution, trail read and users paging', func
     assert.ok(rec != null, 'in the platform trail');
     assert.ok(rec.streamIds.includes('access-admin'), JSON.stringify(rec.streamIds));
     assert.deepEqual(rec.content.record.subject, { via: 'admin-key' });
-    assert.deepEqual(rec.content.record.target, { userId: target.userId, usernameHash: nameHashOf(target.username) }, 'the account id and the keyed hash of its name, never the name');
+    assert.deepEqual(rec.content.record.target, { userId: target.userId, usernameHash: nameHashOf(target.username), hashKeyId: hashKeyId() }, 'the account id and the keyed hash of its name (with its key id), never the name');
 
     since = now();
     assert.equal((await coreRequest.get('/system/user-info/' + target.username).set(asSession(token))).status, 200);
@@ -216,7 +218,7 @@ describe('[SYAU] platform trail, attribution, trail read and users paging', func
     assert.equal(rec.type, 'audit-log/pryv-api-error');
     assert.equal(rec.content.record.subject.userId, admin.userId);
     // No account of that name: no id, the keyed hash of the name only.
-    assert.deepEqual(rec.content.record.target, { usernameHash: nameHashOf(nobody) });
+    assert.deepEqual(rec.content.record.target, { usernameHash: nameHashOf(nobody), hashKeyId: hashKeyId() });
     assert.ok(!JSON.stringify(rec).includes(nobody), 'the name is not in the record');
   });
 
@@ -295,6 +297,132 @@ describe('[SYAU] platform trail, attribution, trail read and users paging', func
       });
     } finally {
       await audit.reloadConfig();
+    }
+  });
+
+  const slug = () => cuid().toLowerCase().replace(/[^a-z0-9]/g, '').slice(-8);
+  const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  it('[SYAU9] an account erased with the admin key is in the platform trail by default, named by its id and keyed hash; a refused anonymous deletion is not', async () => {
+    const app = globalThis.app;
+    if (!app.api.has('auth.delete')) await require('api-server/src/methods/auth/delete.ts').default(app.api);
+    const target = await freshUser('syaudel');
+    let since = now();
+    const res = await coreRequest.delete('/users/' + target.username).set('authorization', adminKey);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    const rows = await trail(PLATFORM_TRAIL_USER_ID, 'auth.delete', since);
+    assert.equal(rows.length, 1);
+    const [rec] = rows;
+    assert.ok(rec.streamIds.includes('access-admin'), JSON.stringify(rec.streamIds));
+    assert.deepEqual(rec.content.record, { subject: { via: 'admin-key' }, target: { userId: target.userId, usernameHash: nameHashOf(target.username), hashKeyId: hashKeyId() } });
+    // (A test fixture may give the account its name as id: that one occurrence is the id.)
+    const occurrences = JSON.stringify(rec).split(target.username).length - 1;
+    assert.equal(occurrences, target.userId === target.username ? 1 : 0, 'never the name: ' + JSON.stringify(rec));
+    since = now();
+    const nobody = 'syaunodel' + slug();
+    assert.ok((await coreRequest.delete('/users/' + nobody)).status >= 400, 'refused without a credential');
+    await pause(200);
+    assert.equal((await trail(PLATFORM_TRAIL_USER_ID, 'auth.delete', since, 0)).length, 0, 'a refusal anyone can cause: syslog only');
+  });
+
+  it('[SYAU10] registrations opted in: a refused registration of a taken username, or of a taken email, stores neither in the platform trail', async () => {
+    const audit = require('audit').default;
+    const takenName = ('syautk' + slug()).slice(0, 20);
+    const takenEmail = takenName + '@syau.example.com';
+    const fu = await getNewFixture().user(takenName, { password: PASSWORD, email: takenEmail });
+    usedUsers.push(fu.attrs.id);
+    const fresh = 'syaunw' + slug();
+    const body = (username, email) => ({ appId: 'syau-app', username, password: PASSWORD, email, insurancenumber: '12345', language: 'en' });
+    const optIn = { audit: { platformTrail: { filter: { methods: { include: ['admin-acts', 'auth.register'], exclude: [] } } } } };
+    try {
+      await withInjectedConfig(optIn, async () => {
+        await audit.reloadConfig();
+        const since = now();
+        const byName = await coreRequest.post('/users').send(body(takenName, fresh + '@syau.example.com'));
+        assert.ok(byName.status >= 400 && byName.status < 500, 'taken username refused: ' + byName.status);
+        const byEmail = await coreRequest.post('/users').send(body(fresh, takenEmail));
+        assert.ok(byEmail.status >= 400 && byEmail.status < 500, 'taken email refused: ' + byEmail.status);
+        const rows = await trail(PLATFORM_TRAIL_USER_ID, 'auth.register', since, 2);
+        assert.equal(rows.length, 2, 'both refusals kept (the filter names the id)');
+        const text = JSON.stringify(rows);
+        for (const s of [takenName, takenEmail, fresh]) assert.ok(!text.includes(s), s + ' in ' + text);
+        for (const r of rows) assert.equal(r.content.message, undefined, 'the message, which quotes the input, is not stored');
+      });
+    } finally {
+      await audit.reloadConfig();
+    }
+  });
+
+  it('[SYAU11] a filtered read stopped by the scan limit answers the time it reached (scannedToTime); continuing from it finds the match further down', async () => {
+    const { readPlatformTrail, AUDIT_READ_SCAN_MAX } = require('api-server/src/methods/systemAdminAudit.ts');
+    const total = AUDIT_READ_SCAN_MAX + 500;
+    // Most recent first; one record of the target, past the scan limit.
+    const all = Array.from({ length: total }, (_, i) => ({ id: 'syau-r' + i, time: 1e9 - i, content: { record: { subject: { via: 'admin-key' }, target: { userId: i === total - 10 ? 'syau-far' : 'syau-other' } } } }));
+    const storage = {
+      forUser: async () => ({
+        getEvents: async ({ query, options }) => {
+          const upTo = query.find((q) => q.type === 'lowerOrEqual' && q.content.field === 'time');
+          const rows = upTo != null ? all.filter((e) => e.time <= upTo.content.value) : all;
+          return rows.slice(options.skip, options.skip + options.limit);
+        }
+      })
+    };
+    const first = await readPlatformTrail(storage, { target: 'syau-far', limit: 10, skip: 0 });
+    assert.deepEqual(first.events, []);
+    assert.equal(first.hasMore, true);
+    assert.equal(first.scanLimitReached, true);
+    assert.equal(first.scannedToTime, all[AUDIT_READ_SCAN_MAX - 1].time, 'the time of the last record scanned');
+    const next = await readPlatformTrail(storage, { target: 'syau-far', toTime: first.scannedToTime, limit: 10, skip: 0 });
+    assert.deepEqual(next.events.map((e) => e.id), ['syau-r' + (total - 10)]);
+    assert.equal(next.hasMore, false);
+    assert.equal(next.scanLimitReached, undefined);
+  });
+
+  it('[SYAU12] admin-key writes under /reg (invitations, DNS records, core rename) are administration acts in the platform trail, done or refused, never a token; an unauthorized call is not recorded', async () => {
+    let since = now();
+    // Invitation tokens close registration to anyone without one: removed at the end.
+    const tokensBefore = new Set((await db.getAllInvitationTokens()).map((t) => t.id));
+    const inv = await coreRequest.get('/reg/admin/invitations/post?count=2&message=syau-free-text').set('authorization', adminKey);
+    try {
+      assert.equal(inv.status, 200, JSON.stringify(inv.body));
+    } finally {
+      for (const t of await db.getAllInvitationTokens()) if (!tokensBefore.has(t.id)) await db.deleteInvitationToken(t.id);
+    }
+    let [rec] = await trail(PLATFORM_TRAIL_USER_ID, 'system.reg.invitations.create', since);
+    assert.ok(rec != null, 'invitations recorded');
+    assert.deepEqual(rec.content.record.subject, { via: 'admin-key' });
+    assert.equal(rec.content.record.diff.count, 2);
+    const text = JSON.stringify(rec);
+    for (const t of inv.body.data) assert.ok(!text.includes(t.id), 'no invitation token');
+    assert.ok(!text.includes('syau-free-text'), 'not the free-text description');
+
+    const sub = '_syau-' + slug();
+    since = now();
+    assert.equal((await coreRequest.post('/reg/records').set('authorization', adminKey).send({ subdomain: sub, records: { txt: ['syau-txt-value'] } })).status, 200);
+    [rec] = await trail(PLATFORM_TRAIL_USER_ID, 'system.reg.records.set', since);
+    assert.ok(rec != null, 'DNS record set recorded');
+    assert.deepEqual(rec.content.record.target, { subdomain: sub });
+    assert.deepEqual(rec.content.record.diff, { recordTypes: ['txt'] });
+    assert.ok(!JSON.stringify(rec).includes('syau-txt-value'), 'the kinds of record, not their values');
+    since = now();
+    assert.equal((await coreRequest.delete('/reg/records/' + sub).set('authorization', adminKey)).status, 200);
+    [rec] = await trail(PLATFORM_TRAIL_USER_ID, 'system.reg.records.delete', since);
+    assert.ok(rec != null && rec.content.record.target.subdomain === sub, 'DNS record delete recorded');
+
+    since = now();
+    const rename = await coreRequest.get('/reg/admin/servers/syau-src/rename/syau-unknown-core').set('authorization', adminKey);
+    assert.equal(rename.status, 400, JSON.stringify(rename.body));
+    [rec] = await trail(PLATFORM_TRAIL_USER_ID, 'system.reg.servers.rename', since);
+    assert.ok(rec != null, 'a refused rename is recorded');
+    assert.equal(rec.type, 'audit-log/pryv-api-error');
+    assert.deepEqual(rec.content.record.target, { srcCore: 'syau-src', dstCore: 'syau-unknown-core' });
+
+    since = now();
+    assert.equal((await coreRequest.get('/reg/admin/invitations/post?count=1').set('authorization', 'syau-not-the-key')).status, 404);
+    assert.equal((await coreRequest.post('/reg/records').send({ subdomain: sub, records: { txt: ['x'] } })).status, 404);
+    await pause(200);
+    for (const m of ['system.reg.invitations.create', 'system.reg.records.set']) {
+      assert.equal((await trail(PLATFORM_TRAIL_USER_ID, m, since, 0)).length, 0, m + ': an unauthorized call is not recorded');
     }
   });
 

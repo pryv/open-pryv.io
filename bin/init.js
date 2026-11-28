@@ -1229,7 +1229,8 @@ ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 # # (GET /system/admin/audit, bin/admin.js audit tail) are stored, among those
 # # audit.storage.filter selects. Default "admin-acts": the administration
 # # acts only; public traffic (auth.register, oauth.*, sso.refused,
-# # mfa.recover) stays in syslog unless named here (or include: ['all']).
+# # mfa.recover) stays in syslog unless named here (or include: ['all']);
+# # an opted-in public record keeps the caller's IP address.
 # # audit:
 # #   platformTrail:
 # #     filter:

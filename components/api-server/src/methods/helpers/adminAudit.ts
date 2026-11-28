@@ -14,11 +14,13 @@ import type { AdminPermission } from 'business/src/admin/permissions.ts';
 import { activeGrants, hasActiveGrant, effectivePermissions } from 'business/src/admin/roles.ts';
 import { coreContext } from 'business/src/admin/scopes.ts';
 import { readLocalPolicy } from 'business/src/admin/localPolicy.ts';
-import { ledgerKey, usernameHash } from 'business/src/erasureLedger/index.ts';
+import { scrubAccountNames as scrubNames } from 'business/src/admin/accountNames.ts';
 import { factory as errors } from 'errors';
 import { ready, getLogger, getConfigSync } from '@pryv/boiler';
 import { getUsersRepository } from 'business/src/users/index.ts';
 import { SYSTEM_ROUTES } from '../../routes/system-permissions.ts';
+import { isAdminKeyInFullScope } from 'middleware/src/isAdminKey.ts';
+import { clientIp } from 'middleware/src/clientIp.ts';
 
 /**
  * Audit steps shared by the methods of the administration routes (`/system`).
@@ -270,48 +272,43 @@ export function adminRoute (opts: { recordRefusals?: boolean } = {}) {
   };
 }
 
-// ------------------------------------------------------------ account names
-
-/** Keys of a record's `target` / `diff` (and of the query) that hold a username or a part of one. */
-const ACCOUNT_NAME_KEYS: Readonly<Record<string, string>> = Object.freeze({
-  username: 'usernameHash',
-  delegateUsername: 'delegateUsernameHash',
-  search: 'searchHash'
-});
-
 /**
- * The keyed hash of a username, as the erasure ledger computes it (its key:
- * `accountErasure.ledger.hmacKey`, or derived from the admin key), with the
- * key's id; null when no key is available.
+ * What a handler behind `adminRoute()` records of its act: kept for the
+ * record written once the answer is sent, and set on the prepared record so
+ * that an error the error middleware records keeps it too.
  */
-function nameHash (name: string): string | null {
-  try {
-    const k = ledgerKey(getConfigSync());
-    return usernameHash(k, name);
-  } catch {
-    return null;
-  }
+export function setRouteAct (res: Response, details: { target?: AdminTarget; diff?: Record<string, unknown>; result?: Record<string, unknown> }): void {
+  res.locals.adminAct = Object.assign({}, res.locals.adminAct, details);
+  if (res.locals.adminContext != null) setAuditDetails(res.locals.adminContext, { target: details.target, diff: details.diff });
 }
 
+const NO_TRACING = Object.freeze({ startSpan () {}, finishSpan () {}, logForSpan () {} });
+
 /**
- * A record part with every username replaced by its keyed hash (never stored
- * in clear: the platform trail outlives the accounts it names and is outside
- * their erasure). Without a key, the name is left out.
+ * For an administration route outside `/system` that the admin key alone
+ * opens (`/reg/admin/*`, `/reg/records`): the Express step, before
+ * `adminRoute()`, that gives a request authorized by the admin key in full
+ * scope the context of an administration act (subject `admin-key`); any
+ * other request is left alone (its refusal is the route's, not recorded).
+ */
+export function adminKeyAct (methodId: string, config: ConfigReader) {
+  return function adminKeyActStep (req: AdminRouteRequest, _res: Response, next: NextFunction) {
+    if (isAdminKeyInFullScope(req.headers.authorization, config)) {
+      const subject: AdminSubject = { kind: 'key', permissions: new Set(), denied: [] };
+      req.context = { methodId, adminSubject: subject, source: { name: 'http', ip: clientIp(req) }, tracing: NO_TRACING };
+    }
+    next();
+  };
+}
+
+// ------------------------------------------------------------ account names
+
+/**
+ * A record part with every username replaced by its keyed hash and the key's
+ * id (business/src/admin/accountNames.ts). Without a key, the name is left out.
  */
 export function scrubAccountNames<T extends Record<string, unknown> | undefined> (part: T): T {
-  if (part == null || typeof part !== 'object') return part;
-  let out: Record<string, unknown> | null = null;
-  for (const [key, hashKey] of Object.entries(ACCOUNT_NAME_KEYS)) {
-    if (!Object.hasOwn(part, key)) continue;
-    out ??= { ...part };
-    const value = out[key];
-    delete out[key];
-    if (typeof value === 'string' && value !== '') {
-      const hash = nameHash(value);
-      if (hash != null) out[hashKey] = hash;
-    }
-  }
-  return (out ?? part) as T;
+  return scrubNames(part);
 }
 
 /** The request's query string without a username in clear (it is recorded as `content.query`). */

@@ -25,7 +25,8 @@
 // A multi-core joiner that layers a host-config file passes it with
 // `--config <file>`, as for bin/master.js. A code is printed once and never
 // stored (only its SHA-256 is): keep the output out of shared logs. Each act
-// leaves one line (never a code) in the audit syslog channel when it is on.
+// leaves one line (never a code) in the audit syslog channel when it is on,
+// and one record in this core's platform trail (ids `admin.cli.*`).
 
 const path = require('path');
 const fs = require('fs');
@@ -419,12 +420,24 @@ function removeSetupCodeFile () {
   }
 }
 
+/** The audit method id of each act of this tool (declared in audit/src/apiMethods/adminRoles.ts). */
+const ACT_METHOD_IDS = Object.freeze({
+  'setup-code.replaced': 'admin.cli.setupCode.replaced',
+  'setup.finished': 'admin.cli.setup.finished',
+  'claim-code.created': 'admin.cli.claimCode.created',
+  'role.granted': 'admin.cli.role.granted',
+  'role.deleted': 'admin.cli.role.deleted',
+  'sessions.revoked': 'admin.cli.sessions.revoked'
+});
+
 /**
  * One line per act of this tool (never a code): in the tool's log and, when
- * `audit.syslog.active`, through the audit syslog channel (notice level), so
- * a later investigation finds the acts done from a shell.
+ * `audit.syslog.active`, through the audit syslog channel (notice level); and
+ * one record in this core's platform trail (`storeAct`), so a later
+ * investigation finds the acts done from a shell.
  */
 async function recordAct (config, act, fields) {
+  await storeAct(config, act, fields);
   let osUser = 'unknown';
   try { osUser = require('os').userInfo().username; } catch (_e) { /* no passwd entry in some containers */ }
   const parts = ['admin-cli', act];
@@ -447,6 +460,59 @@ async function recordAct (config, act, fields) {
     });
   } catch (err) {
     console.error('admin: the syslog line was not sent: ' + err.message);
+  }
+}
+
+/**
+ * The record of an act of this tool in the platform trail, when audit is on,
+ * the audit storage keeps the trail and `audit.platformTrail.filter` selects
+ * its id (`admin-acts` does): `{ subject: { via: 'cli', osUser }, target?:
+ * { userId }, diff? }`, never a code. A record that cannot be written is
+ * reported; the act itself is done.
+ */
+async function storeAct (config, act, fields) {
+  const methodId = ACT_METHOD_IDS[act];
+  try {
+    if (methodId == null || config.get('audit:active') !== true) return;
+    const storage = require('storages').auditStorage;
+    if (storage == null || storage.acceptsPlatformTrail?.() !== true) return;
+    const AuditFilter = require('../components/audit/src/AuditFilter.ts').default;
+    const filter = new AuditFilter({
+      syslogFilter: config.get('audit:syslog:filter'),
+      storageFilter: config.get('audit:storage:filter'),
+      platformTrailFilter: config.get('audit:platformTrail:filter') ?? null
+    });
+    const channels = filter.isAudited(methodId);
+    if (!channels || channels.platformTrail !== true) return;
+    const C = require('../components/audit/src/Constants.ts').default;
+    let osUser = 'unknown';
+    try { osUser = require('os').userInfo().username; } catch (_e) { /* no passwd entry in some containers */ }
+    const record = { subject: { via: 'cli', osUser } };
+    const diff = {};
+    for (const [k, v] of Object.entries(fields)) {
+      if (v == null) continue;
+      if (k === 'target') record.target = { userId: v };
+      else diff[k] = v;
+    }
+    if (Object.keys(diff).length > 0) record.diff = diff;
+    const now = require('unix-timestamp').now();
+    const event = {
+      id: require('@paralleldrive/cuid2').createId(),
+      createdBy: 'system',
+      modifiedBy: 'system',
+      streamIds: [C.ACCESS_STREAM_ID_PREFIX + 'admin-cli', C.ACTION_STREAM_ID_PREFIX + methodId],
+      time: now,
+      endTime: now,
+      created: now,
+      modified: now,
+      trashed: false,
+      type: C.EVENT_TYPE_VALID,
+      content: { action: methodId, source: { name: 'admin-cli' }, record }
+    };
+    const trail = await storage.forUser(C.PLATFORM_TRAIL_USER_ID);
+    await trail.createEvent(event);
+  } catch (err) {
+    console.error('admin: the platform-trail record of this act was not written: ' + ((err && err.message) || err));
   }
 }
 

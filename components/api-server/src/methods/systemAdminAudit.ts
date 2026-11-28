@@ -19,8 +19,8 @@ import { wrap } from './helpers/adminAudit.ts';
  * `system.audit.get`: the platform trail of this core, the stored records of
  * the audited calls without an account of this core (administration acts),
  * most recent first. Filters: `fromTime` / `toTime` (seconds), `methodId`
- * (read by the storage), `subject` (an administrator's user id, `admin-key`
- * or `setup`) and `target` (a value the act names) applied before the page is
+ * (read by the storage), `subject` (an administrator's user id, `admin-key`,
+ * `setup` or `cli`) and `target` (a value the act names) applied before the page is
  * cut (`readPlatformTrail`); `hasMore` says whether matching records may
  * follow; `skip` is bounded (a deeper read narrows `toTime`). No aggregation across cores:
  * each core answers for its own trail. Not itself audited.
@@ -37,7 +37,7 @@ const PARAMS = new Set(['fromTime', 'toTime', 'methodId', 'subject', 'target', '
 const METHOD_ID_RE = /^[A-Za-z0-9._-]{1,128}$/;
 const FILTER_MAX = 256;
 
-type TrailEvent = { content?: { record?: { subject?: { userId?: unknown; via?: unknown }; target?: unknown } } };
+type TrailEvent = { id?: string; time?: number; content?: { record?: { subject?: { userId?: unknown; via?: unknown }; target?: unknown } } };
 
 function numberParam (value: unknown): number | null {
   if (value == null) return null;
@@ -50,7 +50,7 @@ function actedBy (event: TrailEvent, subject: string): boolean {
   const s = event.content?.record?.subject;
   if (s == null) return false;
   if (s.userId === subject) return true;
-  return (subject === 'admin-key' || subject === 'setup') && s.via === subject;
+  return (subject === 'admin-key' || subject === 'setup' || subject === 'cli') && s.via === subject;
 }
 
 /** Whether the record names `target` as (one of the values of) the object of the act. */
@@ -68,15 +68,18 @@ export function keepsPlatformTrail (storage: unknown): storage is TrailStorage {
   return storage != null && (storage as TrailStorage).acceptsPlatformTrail?.() === true;
 }
 
-export type TrailPage = { events: TrailEvent[]; hasMore: boolean; scanLimitReached?: true };
+export type TrailPage = { events: TrailEvent[]; hasMore: boolean; scanLimitReached?: true; scannedToTime?: number };
 
 /**
  * The records of the platform trail, most recent first (validated query):
  * what `system.audit.get` answers, also read by `bin/admin.js audit tail`.
  * `skip` and `limit` count matching records: with a `subject` or `target`
  * filter the trail is read in batches and filtered before the page is cut,
- * over at most AUDIT_READ_SCAN_MAX records (`scanLimitReached` then; narrow the
- * time range, e.g. `toTime` = the time of the last record answered).
+ * over at most AUDIT_READ_SCAN_MAX records. When that limit stops the scan
+ * before the page is full: `scanLimitReached` and `scannedToTime`, the time of
+ * the last record scanned; the next read continues with `toTime` =
+ * `scannedToTime` and `skip: 0`. `toTime` is inclusive: records sharing that
+ * time come again, the client drops by `id` those it already has.
  * `hasMore`: matching records may follow this page.
  */
 export async function readPlatformTrail (storage: TrailStorage, q: TrailQuery): Promise<TrailPage> {
@@ -96,16 +99,21 @@ export async function readPlatformTrail (storage: TrailStorage, q: TrailQuery): 
   const found: TrailEvent[] = [];
   let scanned = 0;
   let ended = false;
+  let lastTime: number | undefined;
   while (found.length < wanted && scanned < AUDIT_READ_SCAN_MAX) {
     const size = Math.min(AUDIT_READ_SCAN_BATCH, AUDIT_READ_SCAN_MAX - scanned);
     const batch = await read(scanned, size);
     scanned += batch.length;
     for (const e of batch) if (matches(e)) found.push(e);
+    if (batch.length > 0 && typeof batch[batch.length - 1].time === 'number') lastTime = batch[batch.length - 1].time;
     if (batch.length < size) { ended = true; break; } // the end of the trail
   }
   const page = found.slice(q.skip, q.skip + q.limit);
   const cut = !ended && found.length < wanted;
-  return cut ? { events: page, hasMore: true, scanLimitReached: true } : { events: page, hasMore: found.length > q.skip + q.limit };
+  if (!cut) return { events: page, hasMore: found.length > q.skip + q.limit };
+  return lastTime != null
+    ? { events: page, hasMore: true, scanLimitReached: true, scannedToTime: lastTime }
+    : { events: page, hasMore: true, scanLimitReached: true };
 }
 
 export default async function (systemAPI: { register: (...args: unknown[]) => void }): Promise<void> {
@@ -151,7 +159,10 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
       result.limit = limit;
       result.skip = skip;
       result.hasMore = page.hasMore;
-      if (page.scanLimitReached === true) result.scanLimitReached = true;
+      if (page.scanLimitReached === true) {
+        result.scanLimitReached = true;
+        if (page.scannedToTime != null) result.scannedToTime = page.scannedToTime;
+      }
     })
   );
 }
