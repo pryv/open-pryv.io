@@ -62,7 +62,8 @@ export type WhoMayRegister = 'anyAccount' | 'validatedPublishers';
 
 export const VALIDATION_LEVELS: readonly ValidationLevel[] = Object.freeze(['nonValidated', 'publisherValidated', 'appValidated']);
 const CONSENT_POLICIES: readonly string[] = ['allow', 'testers', 'refuse'];
-const TOP_KEYS = ['mode', 'whoMayRegister', 'levels'];
+// `limits` is checked with the developer space settings (developer/config.ts).
+const TOP_KEYS = ['mode', 'whoMayRegister', 'levels', 'limits'];
 const LEVEL_KEYS = ['consent', 'scopeTemplate', 'maxGrants'];
 /** Upper bound of `maxGrants` (the count lists the client's rows). */
 export const MAX_GRANTS_LIMIT = 100_000;
@@ -112,7 +113,7 @@ export function describeClientRegistrationConfig (raw: unknown, opts: { extensio
   const at = 'oauth.clientRegistration';
   if (raw == null) return { problems, warnings };
   if (!isPlainObject(raw)) {
-    problems.push(`${at} must be an object (mode, whoMayRegister, levels)`);
+    problems.push(`${at} must be an object (mode, whoMayRegister, levels, limits)`);
     return { problems, warnings };
   }
   for (const k of Object.keys(raw)) {

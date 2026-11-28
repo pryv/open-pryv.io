@@ -10,6 +10,9 @@ import { ROLE_ROUTES } from './systemRoutes/roles.ts';
 import { AUDIT_ROUTES } from './systemRoutes/audit.ts';
 import { PLATFORM_CONFIG_ROUTES } from './systemRoutes/platformConfig.ts';
 import { OAUTH_ROUTES } from './systemRoutes/oauth.ts';
+import { INVITATION_ROUTES } from './systemRoutes/invitations.ts';
+import { OBSERVABILITY_ROUTES } from './systemRoutes/observability.ts';
+import { DNS_ROUTES } from './systemRoutes/dns.ts';
 
 /**
  * Every route under `/system` and what it accepts: the permission an
@@ -21,8 +24,9 @@ import { OAUTH_ROUTES } from './systemRoutes/oauth.ts';
  *
  * The table is the main list below followed by one list per area, each in
  * its own file under `systemRoutes/` (roles, audit, platform configuration,
- * OAuth review). A route of an area goes in that area's list. The matcher
- * takes the first entry that matches, in that order.
+ * OAuth review, invitations, observability, DNS records). A route of an area
+ * goes in that area's list, never in this file. The matcher takes the first
+ * entry that matches, in that order.
  *
  * Break-glass routes: core to core, setup code, claim codes, role listing and
  * revocation, status. Core-to-core routes accept the admin key only.
@@ -102,7 +106,10 @@ export const SYSTEM_ROUTES: readonly SystemRouteEntry[] = Object.freeze([
   ...ROLE_ROUTES,
   ...AUDIT_ROUTES,
   ...PLATFORM_CONFIG_ROUTES,
-  ...OAUTH_ROUTES
+  ...OAUTH_ROUTES,
+  ...INVITATION_ROUTES,
+  ...OBSERVABILITY_ROUTES,
+  ...DNS_ROUTES
 ]);
 
 type Compiled = { entry: SystemRouteEntry; segments: string[] };

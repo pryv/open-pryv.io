@@ -33,6 +33,7 @@ import { offeredCapabilities } from 'business/src/admin/capabilities.ts';
 import { lockdownView, withoutHiddenCapabilities } from 'business/src/admin/lockdown.ts';
 import { policyView, readLocalPolicy } from 'business/src/admin/localPolicy.ts';
 import { setupChecks } from 'business/src/admin/setupChecks.ts';
+import { developerView } from 'oauth2/src/developer/config.ts';
 import { factory as errors } from 'errors';
 import { ready, getLogger } from '@pryv/boiler';
 import { getUsersRepository } from 'business/src/users/index.ts';
@@ -410,11 +411,12 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
 
   // ------------------------------------------------------------ portal
 
-  // Public: what the portal shows on this platform (spaces, modules), from `portal.*`.
+  // Public: what the portal shows on this platform (spaces, modules), from
+  // `portal.*`, and what the developer space adds (oauth2/src/developer/config.ts).
   systemAPI.register('system.portalSettings.get',
     auditAs('public'),
     wrap(async (_context, _params, result) => {
-      Object.assign(result, portalSettings(config));
+      Object.assign(result, portalSettings(config), developerView(config));
     }));
 
   systemAPI.register('system.portalContext.get',

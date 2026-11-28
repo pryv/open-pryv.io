@@ -971,6 +971,7 @@ ${hasHostedSites ? '# # The hostedSites: block above already holds the administr
 # #   modules:
 # #     disabled: []   # portal module ids switched off
 # #     order: []      # portal module ids listed first, in this order
+# #   customCapabilities: []   # x-<name> capabilities offered to the platform's own portal modules
 # # setup:
 # #   codeTtlHours: 24
 # #   codeHash: null
@@ -991,6 +992,18 @@ ${hasHostedSites ? '# # The hostedSites: block above already holds the administr
 # #     capabilities: {}               # <capability>: editable | readonly | hidden
 # #     platformConfig:
 # #       readonly: []                 # platform configuration keys
+
+# # Applications registered by developers (oauth.clientRegistration.mode:
+# # delegated): what one account may register, and the terms it accepts first
+# # (url and version; null: no terms). Merge these keys into the oauth: block.
+# # oauth:
+# #   clientRegistration:
+# #     limits:
+# #       appsPerAccount: 20
+# #       creationsPerDay: 5
+# #   developerTerms:
+# #     url: null
+# #     version: null
 
 # # adapterRoutes: expose a sidecar container (a resource server for this core's
 # # accounts) under /adapter/<name>/ on every host. The core forwards every method,
@@ -1045,6 +1058,9 @@ ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 # # platform:
 # #   piiMode: cleartext   # opt-out; default is hashed
 # #   configPollSeconds: 15   # checks of the platform store for a configuration change
+# #   configStore:            # this core only: its use of the platform store
+# #     ignore: false         # true: load no value from the platform store
+# #     localOnly: []         # configuration keys always taken from this core's files
 
 # # eventFiles — attachments + previews size limits.
 # # previewsMaxInputPixels: an image declaring more pixels is not decoded

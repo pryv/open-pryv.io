@@ -273,6 +273,7 @@ class Application {
 
     require('./routes/accesses.ts').default(this.expressApp, this);
     require('./routes/delegations.ts').default(this.expressApp, this);
+    require('./routes/oauthApps.ts').default(this.expressApp, this);
     require('./routes/account.ts').default(this.expressApp, this);
     require('./routes/externalIds.ts').default(this.expressApp, this);
     require('./routes/accountAutoDeletion.ts').default(this.expressApp, this);

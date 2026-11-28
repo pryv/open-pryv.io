@@ -242,6 +242,7 @@ class Server {
     await require('./methods/systemAdminAudit.ts').default(app.systemAPI);
     await require('./methods/systemPlatformConfig.ts').default(app.systemAPI);
     await require('./methods/systemAdminOauth.ts').default(app.systemAPI);
+    await require('./methods/systemAdminOps.ts').default(app.systemAPI);
     await require('./methods/utility.ts').default(app.api);
     await require('./methods/auth/login.ts').default(app.api);
     await require('./methods/auth/register.ts').default(app.api);
@@ -261,6 +262,7 @@ class Server {
     await require('./methods/streams.ts').default(app.api);
     await require('./methods/events.ts').default(app.api);
     await require('./methods/delegations.ts').default(app.api);
+    await require('./methods/oauthApps.ts').default(app.api);
     this.logger.debug('api methods registered');
     // Telemetry starts HERE, not in Application.initiate(): the registry is
     // only complete once the lines above have run, and those method ids are
