@@ -192,7 +192,9 @@ export default function platformConfigConformance (getDB) {
       const stop = pc.startPolling(config, db, 'core-a', (state) => changes.push(state.rev));
       try {
         await pc.setEntry(db, 'service.name', 'From core B', { kind: 'session', userId: 'u', coreId: 'core-b' });
-        for (let i = 0; i < 30 && config.get('service:name') !== 'From core B'; i++) await sleep(100);
+        // The new values are in place before the change callback runs (loadScope
+        // still writes this core's revision), so wait for both.
+        for (let i = 0; i < 30 && (config.get('service:name') !== 'From core B' || changes.length === 0); i++) await sleep(100);
         assert.equal(config.get('service:name'), 'From core B');
         assert.deepEqual(changes, [1]);
       } finally {
