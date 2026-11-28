@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Administration: places for the next features, trail follow-ups
+
+- Empty per-area route lists (invitations, observability, DNS records), an operations router and method module,
+  the developer-space account methods and routes, and audit id lists (`adminOps`, `oauthApps`), all wired in.
+  Validators of the new keys (`describeConfigStore`, `describeCustomCapabilities`, `describeDeveloperConfig`) run at
+  boot and in `bin/check-config.js` and report nothing yet. No behaviour change. Tests `[ADSM1-6]`.
+- `readPlatformTrail` drops duplicates by id across batches. Handler refusals carry the account id in their target
+  (`auditTargetPending` awaited by the error middleware). `trailFileProblem()` keeps the shell tools from creating
+  or opening a SQLite trail file of another OS user. `UserAuditDatabasePG.importAllEvents` ignores a row's
+  `user_id`. New `[ADAN2]` key scan of record parts; `[AAIMU]`, `[BKP-SHAPE-RESTORE-AUDIT-05]`.
+
 ### Test runs leave no audit records behind
 
 - test-helpers: the end-of-run cleanup (root `afterAll`, sequential runs, skipped with `PRYV_TEST_KEEP_DATA=1`)

@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+### Security: a restore writes a backup's audit records under the restored account
+
+- A restore now writes every audit record of a backup under the account being restored. Before, on the PostgreSQL
+  audit engine, a crafted backup could write records into the platform trail or into another account's trail, and
+  a restore to another account id wrote them under the source id.
+
+### Platform trail: follow-ups
+
+- Refused administrator session and claim-code requests are no longer stored under the default `admin-acts`
+  filter (any account's personal token can make them); naming the ids in the filter keeps them. Refused session
+  requests are limited to 10 per 15 minutes per account (429 with `Retry-After`); accepted requests are never
+  counted.
+- `GET /system/admin/audit` accepts `targetUsername`: the acts on that account, matched by the keyed hash of its
+  name. The name is neither stored nor answered; 503 when the core has no hashing key. `bin/admin.js audit tail
+  --username <name>` does the same.
+- The admin-key reads `GET /reg/admin/users/:username` and `GET /reg/admin/servers/:name/users` are recorded in the
+  platform trail (`system.reg.users.get`, `system.reg.servers.users.list`); the first also in the account's own
+  trail (`account.readByAdmin`).
+- `bin/breach-scope.js`: the report has a `platformTrail` section (Markdown section 6b) listing the administration
+  acts on the account in the window.
+- A username search is recorded as `search: true`, not a hash.
+
+### Configuration: keys reserved for the next administration features
+
+- New keys, not acted on yet, whose defaults change nothing: `platform.configStore.{ignore, localOnly}` (per core),
+  `portal.customCapabilities`, `oauth.developerTerms.{url, version}` and
+  `oauth.clientRegistration.limits.{appsPerAccount, creationsPerDay}`. The `oauth.clientRegistration` block now
+  accepts `limits`.
+
 ### OAuth: app review and publisher decisions over HTTP
 
 - **`/system/admin/oauth`** serves the review acts of `bin/oauth-client.js` and the publisher decisions, for the
