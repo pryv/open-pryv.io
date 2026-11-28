@@ -469,15 +469,37 @@ function toDBFieldName (field: string): string {
 const TIME_BOUND_OPERATORS: Record<string, string> = { equal: '=', greater: '>', greaterOrEqual: '>=', lowerOrEqual: '<=' };
 
 /**
- * The access stream id whose rows of audit_event_streams can serve this
- * query in order, or null (then the statement is the plain one). Eligible:
- * exactly one stream query, of exactly one block, holding an item that names
- * ONE covered id (a plain id or `{ any: [id] }`; the block's other items stay
- * in the filter), a sort on `time` alone, no type filter, and no condition
- * on `time` that a record without a time could meet (those records are not
- * indexed).
+ * The most access ids one read takes from audit_event_streams (one branch of
+ * the merge each); above it, the plain statement. Planning grows faster than
+ * the branch count (measured on PostgreSQL 16: 80 ids 10 ms, 500 ids 77 ms,
+ * 1 000 ids 215 ms), so the cap bounds the planning of one read to about
+ * 0.1 s, where the plain statement costs one LIKE per id per record of the
+ * trail (500 ids matching nothing on 200 000 records: 34 s).
  */
-function streamIndexTerm (params: Params): string | null {
+const MULTI_MAX_IDS = 500;
+
+/** A stream id that is one stored term of the access prefix. */
+function isCoveredId (id: unknown): id is string {
+  // A space is the stored separator: an id holding one is never a single
+  // stored term (the LIKE would match two adjacent terms instead).
+  return typeof id === 'string' && id !== '*' && id.startsWith(COVERED_PREFIX) && !id.includes(IDS_SEPARATOR);
+}
+
+/**
+ * The access stream ids whose rows of audit_event_streams can serve this
+ * query in order, or null (then the statement is the plain one). Eligible:
+ * exactly one stream query, of exactly one block, a sort on `time` alone, no
+ * type filter, and no condition on `time` that a record without a time could
+ * meet (those records are not indexed). Then, in this order:
+ * - an item of the block naming ONE covered id (a plain id or `{ any: [id] }`):
+ *   that id;
+ * - else the `{ any: [...] }` item of the block whose ids are all covered,
+ *   with 2 to `MULTI_MAX_IDS` distinct ids (the one with the fewest): those
+ *   ids. A record the filter accepts names at least one of them, since the
+ *   item is one AND member of the only block.
+ * The block's other items stay in the filter.
+ */
+function streamIndexTerms (params: Params): string[] | null {
   const sort = params.options?.sort;
   if (sort == null) return null;
   const sortEntries = Object.entries(sort);
@@ -496,25 +518,42 @@ function streamIndexTerm (params: Params): string | null {
   }
   const blocks = streamItems[0].content as unknown;
   if (!Array.isArray(blocks) || blocks.length !== 1 || !Array.isArray(blocks[0])) return null;
+  let several: string[] | null = null;
   for (const entry of blocks[0] as unknown[]) {
     let id: unknown = null;
+    let any: unknown = null;
     if (typeof entry === 'string') id = entry;
     else if (entry != null && typeof entry === 'object') {
-      const any = (entry as StreamsQuery).any;
+      any = (entry as StreamsQuery).any;
       if (Array.isArray(any) && any.length === 1) id = any[0];
     }
-    // A space is the stored separator: an id holding one is never a single
-    // stored term (the LIKE would match two adjacent terms instead).
-    if (typeof id === 'string' && id !== '*' && id.startsWith(COVERED_PREFIX) && !id.includes(IDS_SEPARATOR)) return id;
+    if (isCoveredId(id)) return [id];
+    if (!Array.isArray(any) || any.length < 2 || !any.every(isCoveredId)) continue;
+    const ids = [...new Set(any as string[])];
+    if (ids.length < 2 || ids.length > MULTI_MAX_IDS) continue;
+    if (several == null || ids.length < several.length) several = ids;
   }
-  return null;
+  return several;
+}
+
+/**
+ * `(A) UNION ALL (B)` as a balanced tree of parenthesised pairs, so that the
+ * parser's and planner's recursion stays shallow (depth log2 of the branch
+ * count) where a left-deep chain would nest once per branch. The planner
+ * flattens it into one append of every branch.
+ */
+function unionAllTree (branches: string[]): string {
+  if (branches.length === 1) return '(' + branches[0] + ')';
+  const mid = Math.ceil(branches.length / 2);
+  return '(' + unionAllTree(branches.slice(0, mid)) + ' UNION ALL ' + unionAllTree(branches.slice(mid)) + ')';
 }
 
 /**
  * The SELECT of `getEvents` / `getEventsStreamed`.
  *
- * With `indexComplete` and an eligible query (see `streamIndexTerm`), the
- * candidates come from audit_event_streams, in the primary key's order, and
+ * With `indexComplete` and an eligible query (see `streamIndexTerms`), the
+ * candidates come from audit_event_streams, in the primary key's order (for
+ * several ids, an ordered merge of their ranges, deduplicated), and
  * each is looked up in audit_events with EVERY condition of the plain
  * statement, the stream filter included: the authorization filter is the
  * same text with the same values, the table only orders and narrows the
@@ -533,29 +572,64 @@ function buildSelectQuery (userId: string, params: Params, indexComplete: boolea
   let idx = 2;
   const conditions: string[] = ['user_id = $1'];
 
+  let denied = false;
   for (const item of params.query) {
     const result = convertCondition(item, idx, values);
     if (result) {
       conditions.push(result.condition);
       idx = result.nextIdx;
+      if (item.type === 'streamsQuery' && result.condition === 'FALSE') denied = true;
     }
   }
 
-  const term = indexComplete ? streamIndexTerm(params) : null;
-  if (term != null) {
-    values.push(term);
-    const candidates = ['user_id = $1', `stream_id = $${idx++}`];
-    for (const item of params.query) {
-      const operator = TIME_BOUND_OPERATORS[item.type];
-      if (operator == null || (item.content as ComparisonContent)?.field !== 'time') continue;
-      values.push((item.content as ComparisonContent).value);
-      candidates.push(`time ${operator} $${idx++}`);
-    }
+  // A stream filter that denies returns nothing: the plain statement says so
+  // without reading any candidate.
+  const terms = indexComplete && !denied ? streamIndexTerms(params) : null;
+  if (terms != null) {
+    // The conditions on `time`, repeated on audit_event_streams.time to bound
+    // its range (bound once, after the ids).
+    const timeBounds = (): string[] => {
+      const bounds: string[] = [];
+      for (const item of params.query) {
+        const operator = TIME_BOUND_OPERATORS[item.type];
+        if (operator == null || (item.content as ComparisonContent)?.field !== 'time') continue;
+        values.push((item.content as ComparisonContent).value);
+        bounds.push(`time ${operator} $${idx++}`);
+      }
+      return bounds;
+    };
     const direction = (params.options?.sort?.time ?? -1) > 0 ? 'ASC' : 'DESC';
-    let sql = 'SELECT a.* FROM (SELECT eventid AS s_eventid, time AS s_time FROM audit_event_streams WHERE ' +
-      candidates.join(' AND ') + ') s CROSS JOIN LATERAL (SELECT * FROM audit_events WHERE ' + conditions.join(' AND ') +
-      ' AND eventid = s.s_eventid AND time = s.s_time OFFSET 0) a' +
-      ` ORDER BY s.s_time ${direction}, s.s_eventid ${direction}`;
+    let sql: string;
+    if (terms.length === 1) {
+      values.push(terms[0]);
+      const candidates = ['user_id = $1', `stream_id = $${idx++}`, ...timeBounds()];
+      sql = 'SELECT a.* FROM (SELECT eventid AS s_eventid, time AS s_time FROM audit_event_streams WHERE ' +
+        candidates.join(' AND ') + ') s CROSS JOIN LATERAL (SELECT * FROM audit_events WHERE ' + conditions.join(' AND ') +
+        ' AND eventid = s.s_eventid AND time = s.s_time OFFSET 0) a' +
+        ` ORDER BY s.s_time ${direction}, s.s_eventid ${direction}`;
+    } else {
+      // Several ids: the key ranges of each, merged in order (each branch is
+      // read in the primary key's order, `time, eventid`), a record named by
+      // two of them kept once, then looked up exactly as above. No limit in a
+      // branch: a key whose record the filter refuses would use a slot.
+      //
+      // The `ORDER BY` of each branch is what makes the plan a merge. Without
+      // it the planner appended every key of every id and sorted them, even
+      // on a vacuumed table (measured: 240 ms for a page of 20 next to a
+      // dense id); with it each branch is an ordered scan of the primary key
+      // and the merge reads about a page of keys. The plan still follows the
+      // statistics: on a table not vacuumed yet the planner may sort a dense
+      // id's keys, a cost bounded by those keys (never a walk of the trail).
+      const idPlaceholders = terms.map((term) => { values.push(term); return `$${idx++}`; });
+      const bounds = timeBounds().map((b) => ' AND ' + b).join('');
+      const branches = idPlaceholders.map((p) =>
+        `SELECT time AS s_time, eventid AS s_eventid FROM audit_event_streams WHERE user_id = $1 AND stream_id = ${p}${bounds}` +
+        ` ORDER BY time ${direction}, eventid ${direction}`);
+      sql = 'SELECT a.* FROM (SELECT DISTINCT ON (u.s_time, u.s_eventid) u.s_time, u.s_eventid FROM ' + unionAllTree(branches) +
+        ` u ORDER BY u.s_time ${direction}, u.s_eventid ${direction}) k CROSS JOIN LATERAL (SELECT * FROM audit_events WHERE ` +
+        conditions.join(' AND ') + ' AND eventid = k.s_eventid AND time = k.s_time OFFSET 0) a' +
+        ` ORDER BY k.s_time ${direction}, k.s_eventid ${direction}`;
+    }
     if (params.options?.limit) sql += ' LIMIT ' + parseInt(String(params.options.limit));
     if (params.options?.skip) sql += ' OFFSET ' + parseInt(String(params.options.skip));
     return { sql, values };
@@ -730,4 +804,4 @@ function convertCondition (item: QueryItem, idx: number, values: unknown[]): { c
   }
 }
 
-export { UserAuditDatabasePG, buildSelectQuery, streamIndexTerm };
+export { UserAuditDatabasePG, buildSelectQuery, streamIndexTerms, MULTI_MAX_IDS };

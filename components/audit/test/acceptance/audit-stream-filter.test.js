@@ -170,6 +170,81 @@ describe('[ASFL] audit stream filter', function () {
     assert.deepStrictEqual(seen, [[{ type: 'streamsQuery', content: [[{ any: ['access-' + appAccess.id] }]] }]]);
   });
 
+  it('[ASFLA] a personal access reading several access streams: the store query, and the same rows from the index of records by access', async function () {
+    // The shapes the PostgreSQL audit store serves from its index: one `any`
+    // of covered ids (several accesses), or not at all (the `accesses` parent,
+    // whose expansion names the parent id, which is not an access id).
+    const audit = require('audit').default;
+    const userDb = await audit.storage.forUser(userId);
+    const original = userDb.getEventsStreamed;
+    const seen = [];
+    userDb.getEventsStreamed = function (params) {
+      seen.push(structuredClone(params.query.filter((item) => item.type === 'streamsQuery')));
+      return original.call(this, params);
+    };
+    const two = [':_audit:access-' + personal.id, ':_audit:access-' + appAccess.id];
+    let events;
+    try {
+      events = await auditQuery(personal.token, two);
+      await auditQuery(personal.token, [':_audit:accesses']);
+    } finally {
+      userDb.getEventsStreamed = original;
+    }
+    assert.deepStrictEqual(seen[0], [{ type: 'streamsQuery', content: [[{ any: ['access-' + personal.id, 'access-' + appAccess.id] }]] }]);
+    const accesses = seen[1][0].content;
+    assert.strictEqual(accesses.length, 1, JSON.stringify(accesses));
+    assert.ok(accesses[0].some((item) => Array.isArray(item.any) && item.any.includes('accesses')), JSON.stringify(accesses));
+    assert.ok(events.some((e) => e.streamIds.includes(addAccessStreamIdPrefix(personal.id))) &&
+      events.some((e) => e.streamIds.includes(addAccessStreamIdPrefix(appAccess.id))), 'rows of both accesses');
+    // On the PostgreSQL audit engine: the same rows with the index state
+    // forced incomplete (the plain statement).
+    if (userDb.streamIndex == null) return;
+    assert.strictEqual(userDb.streamIndex.isComplete(), true, 'the index is complete in the test core');
+    // Every read is itself audited after its response: bound the reads by a
+    // time in the past, once the rows written up to it have landed.
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    const toTime = Date.now() / 1000 - 0.5;
+    const page = async (options) => {
+      const res = await coreRequest.get(eventsPath).set('Authorization', personal.token).query({ streams: two, toTime, ...options });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body?.error));
+      return res.body.events.map((e) => e.id);
+    };
+    const index = userDb.streamIndex;
+    // A page read with the statements the store sends.
+    const pageWithStatements = async (options) => {
+      const statements = [];
+      const iterable = userDb.readDb.queryIterable;
+      userDb.readDb.queryIterable = function (sql, ...rest) {
+        statements.push(sql);
+        return iterable.call(this, sql, ...rest);
+      };
+      try {
+        return { ids: await page(options), statements };
+      } finally {
+        userDb.readDb.queryIterable = iterable;
+      }
+    };
+    for (const options of [{ limit: 1000 }, { limit: 3, skip: 2 }, { limit: 5, sortAscending: true }]) {
+      // Not vacuous: the indexed read is the merge of the two accesses' ranges,
+      // the plain one never touches the index.
+      const merged = await pageWithStatements(options);
+      const indexed = merged.ids;
+      assert.ok(merged.statements.some((sql) => sql.includes('DISTINCT ON') && sql.includes('audit_event_streams')), JSON.stringify(merged.statements));
+      let plain;
+      try {
+        userDb.streamIndex = { isComplete: () => false };
+        const unindexed = await pageWithStatements(options);
+        plain = unindexed.ids;
+        assert.ok(unindexed.statements.length > 0, 'the plain read went through the store');
+        assert.ok(unindexed.statements.every((sql) => !sql.includes('audit_event_streams')), JSON.stringify(unindexed.statements));
+      } finally {
+        userDb.streamIndex = index;
+      }
+      assert.ok(indexed.length >= Math.min(options.limit, 6), JSON.stringify(options) + ': ' + indexed.length);
+      assert.deepStrictEqual(indexed, plain, JSON.stringify(options));
+    }
+  });
+
   it('[ASFL9] an app access may not read the access or action listings, nor another access\'s stream', async function () {
     for (const stream of [':_audit:accesses', ':_audit:actions', ':_audit:access-' + personal.id, ':_audit:action-events.get']) {
       const res = await coreRequest.get(eventsPath).set('Authorization', appAccess.token).query({ streams: [stream] });

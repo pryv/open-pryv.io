@@ -179,6 +179,18 @@
   owner's) no longer reads every record of the account either: 280 ms before, 1.2 ms now (24 accesses). Results
   are the same rows in the same order; the stream filter that keeps one access out of another's trail is applied
   exactly as before.
+- A read naming several accesses' trails at once (a personal token asking for 2 to 500 `:_audit:access-...`
+  streams in one query) uses the table too, merging the accesses' records in time order: 80 accesses holding few
+  or old records, 5.5 s before, 21 ms now (480 accesses: 32 s before, 0.13 s now, most of it planning the
+  statement). Where the previous plan was already fast it can be slower by the time spent planning (100 accesses
+  whose recent records fill the page: 5.5 ms before, 26 ms now; 500: 22 ms before, 143 ms now), and a read without
+  limit of accesses holding most of the trail takes about twice as long (196 000 records: 1.35 s before, 3.1 s
+  now). With a type filter, more than 500 accesses, or a stream that is not an access (`:_audit:accesses`,
+  an action), it reads as before. The plan follows the database's statistics: the first-start fill ends with a
+  `VACUUM (ANALYZE)` of `audit_event_streams` (about 0.5 s per million audit records, measured idle and with audit
+  writes going on; they are not blocked), without which a page of 20 next to an access holding most records could
+  take about 0.3 s instead of a few milliseconds until autovacuum's first pass. If that `VACUUM` fails, the log says
+  so and the table is used all the same.
 - **New in the database:** table `audit_event_streams` (the access ids named by each audit record), a one-row table
   `audit_event_streams_state`, two triggers on `audit_events` (`audit_event_streams_put`,
   `audit_event_streams_drop`) and their functions. Created at every start when missing; the triggers keep the table
@@ -190,8 +202,9 @@
   0.5 s.
 - **First start of this release** (`migrations.autoRunOnStart`, the default; also with a SQLite base storage and
   the PostgreSQL audit engine): the core fills the table before serving, in batches of 20 000 records, saying so in
-  its log (`audit stream index: building ...`, progress every 10 s, then `complete, N audit records read in N ms`).
-  Measured: about 31 s per million audit records (PostgreSQL 16, data in memory, `shared_buffers` 128 MB), about
+  its log (`audit stream index: building ...`, progress every 10 s, `VACUUM (ANALYZE) audit_event_streams in N ms`,
+  then `complete, N audit records read in N ms`). Measured: about 31 s per million audit records (the `VACUUM`
+  included) (PostgreSQL 16, data in memory, `shared_buffers` 128 MB), about
   470 MB of WAL per million. Installing the triggers at that start takes milliseconds (18 ms with audit writes
   going on), but waits for whatever holds a conflicting lock on `audit_events`, audit writes queuing behind it: seen
   once at 0.8 s, right after a large deletion (most likely an autovacuum, which yields after a second). Writes go on
@@ -268,6 +281,7 @@
   INSERT INTO audit_event_streams_state (complete) VALUES (true)
     ON CONFLICT (id) DO UPDATE SET complete = true, cursor_user_id = NULL, cursor_eventid = NULL, updated_at = now();
   COMMIT;
+  VACUUM (ANALYZE) audit_event_streams;
   ```
 
   A `CREATE TRIGGER` that times out (it waits for the audit inserts in flight) is simply run again; one that

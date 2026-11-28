@@ -288,11 +288,76 @@
   stop after 20 batches and the resume; no drift afterwards. Table: 129 MB heap + 231 MB key per million rows.
   Audit insert (30 000 per side, alternating rounds): median 2.92 / 2.99 ms, p99 3.6 / 6.8 ms. Erasure of
   200 000 records 0.5 / 1.5 s; one-record deletion 2.3 ms with triggers; 20 000 records of an account 51 / 448 ms
-  (no caller in the core). Several ids in one `any` (pre-existing LIKE path, unchanged): 100 ids 8.5 ms when the
+  (no caller in the core). Several ids in one `any` (the LIKE path before the merge of the next section): 100 ids 8.5 ms when the
   page fills from recent records, but 5.6 s with 80 ids that match nothing plus a rare old access (480 ids:
   33 s), one LIKE per id per row over the whole trail; only a personal token can name such a set. SQLite (no
   change; one 1-million-record audit file, a laptop): limit 20 of any access 0.1 to 0.8 ms; skip 5 000 limit 20:
   40 ms on a 1.9 % access, 608 ms on a 60 % one (the deep page of a dense access, a separate matter).
+
+### PostgreSQL audit: a read naming several access ids merges their ranges of `audit_event_streams`
+
+- `buildSelectQuery`: `streamIndexTerm` becomes `streamIndexTerms` (`string[] | null`). Same preconditions (state
+  complete, one stream query of one block, sort on `time` alone, no type filter, `time` conditions a record without
+  a time cannot meet). Then an item naming ONE covered id gives the one-id statement, unchanged to the byte (the
+  `[PGAS8]` pin); else the block's `{ any: [...] }` item whose ids are all covered (`access-`, no space, not `*`),
+  2 to `MULTI_MAX_IDS` (500) distinct ids, the one with the fewest. A stream filter that denies (`FALSE`) takes the
+  plain statement on both paths (before, a deny with an eligible id walked that id's keys to return nothing).
+- The statement: one branch per id (`SELECT time, eventid FROM audit_event_streams WHERE user_id = $1 AND
+  stream_id = $k` plus the `time` bounds, `ORDER BY time, eventid` in the sort direction), joined as a balanced tree
+  of parenthesised `UNION ALL` (nesting log2 N); `DISTINCT ON (time, eventid)` over them, ordered; `CROSS JOIN
+  LATERAL` into `audit_events` with the complete conditions text of the plain statement and `OFFSET 0`, joined on
+  `eventid` and `time`; outer `ORDER BY` / `LIMIT` / `OFFSET`. The table chooses and orders candidates, the
+  lateral's filter (same text, same values) decides; a record named by two ids comes once.
+- The `ORDER BY` inside each branch was not in the first form: without it PostgreSQL 16 appended every key of every
+  id and sorted them on every data set tried (vacuumed 1 M records: 240 ms for a page of 20 next to a dense id);
+  with it, `Limit > Nested Loop > Unique > Merge Append > N x Index Only Scan` on the primary key, no sort. The plan
+  still follows the statistics (it cannot be forced from a production statement): on a table never vacuumed (a
+  fresh fill without the closing `VACUUM` of the last bullet, before autovacuum's first pass) or one an account fills, the planner sorts a dense id's keys
+  (bitmap or sequential scan, then sort), and a deeper `OFFSET` or no limit can flip it to `Append + Sort`. Bounded
+  by the named ids' keys, never the LIKE walk of the trail: measured 0.25 to 0.4 s for a page of 20 next to an id
+  holding 120 000 keys, where the plain statement takes 4 ms. A vacuumed table, including one with 20 % of its rows
+  inserted since the last vacuum, gives the merge for every page of 20 measured.
+- Measured on mbp2 (PostgreSQL 16.8, `shared_buffers` 128 MB, 5 accounts x 200 000 records, the recipe of the
+  section above, vacuumed and analyzed, median of 7, plain / merged, round trip): a rare old access + 79 ids with
+  no record 5 497 / 21 ms (2.4 ms execution, 14 ms planning); + 479 ids 32 355 / 132 ms; 500 ids with no record
+  34 454 / 138 ms. Ids whose records fill the page from recent rows: 10 ids 1.65 / 4.2 ms, 100 ids 5.5 / 26 ms,
+  500 ids 22 / 143 ms (planning). A 60 % access + 79 ids: limit 20 4.2 / 20 ms, skip 5 000 351 / 82 ms, no limit
+  streamed 196 000 rows first row 13 / 35 ms, all 1.35 / 3.1 s; 3 medium accesses no limit 383 / 177 ms; busy +
+  rare recent 143 / 2 ms; 2 medium skip 1 000 126 / 12 ms. Planning grows faster than the id count: 2 ids 0.6 ms,
+  10 1.6 ms, 80 10 ms, 480 73 ms, 500 77 ms, 1 000 215 ms, 2 000 817 ms: hence the cap at 500 (the merge's cost
+  stays bounded by the ids, the plain statement's grows with the trail). Rows equal the plain statement's in every
+  case measured.
+- Tests (`audit-stream-index.test.js`): `[PGASN]` eligibility, the exact statement in both directions with a time
+  bound, values, tree shape and nesting for 500 ids, list choice, the ineligible shapes (an uncovered or parent id,
+  `*`, a space, a type filter, 501 ids, two blocks, a deny with one or several ids, no sort, `time` or null);
+  `[PGASO]` rows and order against the plain statement over 35 shapes x 32 options plus streamed reads (lists of
+  2, 3 and 9 ids, alias, `%` / `_` in an id, ids with no record, `not`, a second `any`, every `time` operator,
+  all states, skips cutting ties); `[PGASP]` the plan from the JSON `EXPLAIN` (one Merge Append, one child per id,
+  each an index scan of the primary key in the sort direction, a Unique, no sort) on the shared test tables and on
+  fresh copies, 50 ids among which 2 dense, the account among 200 000 rows of others, vacuumed; `[PGASQ]` forged
+  and stale rows with two ids. `[PGAS8]` no longer lists two ids as ineligible. `[ASFLA]` (api-server level, all
+  audit engines): a personal token naming two access streams reaches the store as ONE block with one `any` of both
+  ids, `:_audit:accesses` as an `any` holding the parent id `accesses` (stays plain); on the PostgreSQL audit engine
+  the merge runs and returns the same pages (limit, skip, ascending) as with the state forced incomplete.
+- Mutations (each fails a test): `DISTINCT ON` removed (`[PGASO]`, `[PGASQ]`, `[PGASP]`); the lateral filter
+  neutralised with `OR TRUE` (`[PGASO]`, `[PGASQ]`); the `time` join removed (`[PGASQ]`); `user_id = $1` removed
+  from a branch (`[PGASN]` text, `[PGASP]`); the branch `ORDER BY` removed (`[PGASP]`); the outer order reversed
+  (`[PGASO]`, `[PGASQ]`); `OFFSET 0` removed, the deny guard removed, the id cap removed, one covered id accepted
+  as enough (`[PGASN]`).
+- A fill that did work (from zero, or a resumed run that read records) ends with `VACUUM (ANALYZE)
+  audit_event_streams` on its dedicated connection, after the batch loop and before the final trigger check and the
+  completion, so readers switch to the table once it has statistics and a visibility map (`ANALYZE` alone left the
+  planner sorting a dense id's keys). Best effort: a failure is logged at warn and the fill completes. It takes
+  SHARE UPDATE EXCLUSIVE (no read or write of the table waits). Measured on mbp2 (the recipe above, 1 010 500 rows,
+  129 MB heap, autovacuum off on the table): 478 ms idle, 552 ms with a writer at 200 records/s during the fill; the
+  visibility map 100 % afterwards; then the page of 20 next to the dense id is the Merge Append (0.4 to 0.6 ms,
+  where the never-vacuumed table measured 0.25 to 0.4 s). `[PGASR]`: the VACUUM runs once, before the completion,
+  after a fill from zero (`relallvisible > 0`, `reltuples` set); a VACUUM made to fail is warned and the fill
+  completes exact; a complete state and a resumed run with nothing to read run none. Mutations: the VACUUM
+  removed, run unconditionally, or replaced by `ANALYZE` (with the test relaxed to that statement:
+  `relallvisible` stays 0) each fail `[PGASR]`.
+- Review follow-ups: the cap's literal 500 pinned in `[PGASN]`; `[PGASM]` also records the untimed-record decision
+  for several ids; `[ASFLA]` asserts the plain pass never reads `audit_event_streams` (and passes run alone).
 
 ### SQLite: a deep page of a stream most events hold no longer reads every one of them
 

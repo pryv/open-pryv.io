@@ -7,8 +7,9 @@
 
 /**
  * [PGAS] audit_event_streams: the access stream ids of each audit record,
- * kept by triggers, filled by a resumable pass, and used to read one access's
- * audit trail in time order. The reader keeps the stream filter of the plain
+ * kept by triggers, filled by a resumable pass, and used to read the audit
+ * trail of one access, or of several (an ordered merge of their ranges), in
+ * time order. The reader keeps the stream filter of the plain
  * statement: the table orders and narrows, never authorizes.
  */
 
@@ -17,7 +18,7 @@ import { createRequire } from 'node:module';
 import * as helpers from '../../../test/helpers/index.js';
 import { DatabasePG } from '../src/DatabasePG.ts';
 import { AuditStoragePG } from '../src/AuditStoragePG.ts';
-import { UserAuditDatabasePG, buildSelectQuery } from '../src/UserAuditDatabasePG.ts';
+import { UserAuditDatabasePG, buildSelectQuery, streamIndexTerms, MULTI_MAX_IDS } from '../src/UserAuditDatabasePG.ts';
 import { ensureAuditStreamIndex, BATCH_LOCK_KEY, PUT_TRIGGER, DROP_TRIGGER, DROP_FUNCTION_SQL } from '../src/auditStreamIndex.ts';
 const require = createRequire(import.meta.url);
 const migration = require('../migrations/20261127_140000_audit_stream_index.js');
@@ -353,7 +354,6 @@ describe('[PGAS] PostgreSQL audit records indexed by access', function () {
     assert.strictEqual(plain, 'SELECT * FROM audit_events WHERE user_id = $1 AND ((((\' \' || stream_ids || \' \') LIKE $2 ESCAPE \'\\\'))) ' +
       'ORDER BY time DESC, eventid DESC LIMIT 20');
     for (const [name, query, options] of [
-      ['two ids', [{ type: 'streamsQuery', content: [[{ any: ['access-x', 'access-y'] }]] }]],
       ['two blocks', [{ type: 'streamsQuery', content: [[{ any: ['access-x'] }], [{ any: ['access-y'] }]] }]],
       ['two stream queries', [one('access-x'), one('access-y')]],
       ['star', [one('*')]],
@@ -680,5 +680,292 @@ describe('[PGAS] PostgreSQL audit records indexed by access', function () {
     const query = [...BASE(), one('access-x')];
     assert.deepStrictEqual(await read(u, query, { sort: { time: -1 } }, false), ['untimed', 'timed']);
     assert.deepStrictEqual(await read(u, query, { sort: { time: -1 } }, true), ['timed']);
+    // The same decision for several ids (the merge of their ranges).
+    await put(u, 'timed-y', ['access-y', 'action-y'], 20);
+    const both = [...BASE(), several(['access-x', 'access-y'])];
+    assert.ok(isMerge(buildSelectQuery(u, { query: both, options: { sort: { time: -1 } } }, true).sql));
+    assert.deepStrictEqual(await read(u, both, { sort: { time: -1 } }, false), ['untimed', 'timed-y', 'timed']);
+    assert.deepStrictEqual(await read(u, both, { sort: { time: -1 } }, true), ['timed-y', 'timed']);
+  });
+
+  // -- Several access ids: an ordered merge of their key ranges --
+
+  const several = (ids, ...others) => ({ type: 'streamsQuery', content: [[{ any: ids }, ...others]] });
+  const isMerge = (sql) => sql.includes('DISTINCT ON');
+
+  it('[PGASN] several covered ids: which queries merge, and the exact statement', function () {
+    const sqlOf = (query, options = { sort: { time: -1 }, limit: 20 }, complete = true) =>
+      buildSelectQuery('u', { query, options }, complete);
+    const like = (n) => `(' ' || stream_ids || ' ') LIKE $${n} ESCAPE '\\'`;
+    const branch = (n, dir, bound) => 'SELECT time AS s_time, eventid AS s_eventid FROM audit_event_streams WHERE user_id = $1 ' +
+      `AND stream_id = $${n}${bound} ORDER BY time ${dir}, eventid ${dir}`;
+    for (const [time, dir] of [[-1, 'DESC'], [1, 'ASC']]) {
+      const { sql, values } = sqlOf([several(['access-x', 'access-y']), { type: 'lowerOrEqual', content: { field: 'time', value: 50 } }],
+        { sort: { time }, limit: 20, skip: 3 });
+      assert.strictEqual(sql,
+        'SELECT a.* FROM (SELECT DISTINCT ON (u.s_time, u.s_eventid) u.s_time, u.s_eventid FROM ' +
+        `((${branch(5, dir, ' AND time <= $7')}) UNION ALL (${branch(6, dir, ' AND time <= $7')})) ` +
+        `u ORDER BY u.s_time ${dir}, u.s_eventid ${dir}) k CROSS JOIN LATERAL (SELECT * FROM audit_events WHERE user_id = $1 ` +
+        `AND (((${like(2)} OR ${like(3)}))) AND time <= $4 AND eventid = k.s_eventid AND time = k.s_time OFFSET 0) a ` +
+        `ORDER BY k.s_time ${dir}, k.s_eventid ${dir} LIMIT 20 OFFSET 3`, dir);
+      assert.deepStrictEqual(values, ['u', '% access-x %', '% access-y %', 50, 'access-x', 'access-y', 50]);
+    }
+    // Three ids: a balanced tree; 500: its nesting stays shallow.
+    assert.ok(sqlOf([several(['access-x', 'access-y', 'access-z'])]).sql.includes(
+      `FROM (((${branch(5, 'DESC', '')}) UNION ALL (${branch(6, 'DESC', '')})) UNION ALL (${branch(7, 'DESC', '')})) u `));
+    // The cap moves only by a deliberate edit (planning cost, see its comment).
+    assert.strictEqual(MULTI_MAX_IDS, 500);
+    const many = Array.from({ length: MULTI_MAX_IDS }, (_, i) => 'access-m' + i);
+    const big = sqlOf([several(many)]);
+    assert.ok(isMerge(big.sql));
+    assert.strictEqual(big.values.length, 1 + 2 * MULTI_MAX_IDS);
+    let depth = 0;
+    let deepest = 0;
+    for (const c of big.sql) { if (c === '(') deepest = Math.max(deepest, ++depth); else if (c === ')') depth--; }
+    assert.ok(deepest < 20, 'nesting ' + deepest);
+    // Every branch is bounded by the account.
+    assert.strictEqual(big.sql.split('FROM audit_event_streams WHERE user_id = $1 AND stream_id = $').length - 1, MULTI_MAX_IDS);
+
+    // Which list is chosen.
+    const terms = (...entries) => streamIndexTerms({ query: [{ type: 'streamsQuery', content: [entries] }], options: { sort: { time: -1 } } });
+    assert.deepStrictEqual(terms({ any: ['access-x', 'access-y'] }), ['access-x', 'access-y']);
+    assert.deepStrictEqual(terms({ any: ['access-a', 'access-b', 'access-c'] }, { any: ['access-d', 'access-e'] }), ['access-d', 'access-e']);
+    assert.deepStrictEqual(terms({ any: ['access-a', 'access-b'] }, 'access-z'), ['access-z'], 'one id wins');
+    assert.deepStrictEqual(terms({ any: ['access-a', 'access-a', 'access-b'] }), ['access-a', 'access-b']);
+    assert.deepStrictEqual(terms({ any: ['access-a', 'access-b'] }, { not: ['access-c'] }), ['access-a', 'access-b']);
+    assert.strictEqual(terms({ any: ['access-a', 'access-a'] }), null);
+    assert.strictEqual(terms({ any: many }).length, MULTI_MAX_IDS);
+    // The one-id statement is unchanged ([PGAS8] pins its text).
+    assert.ok(!isMerge(sqlOf([one('access-x')]).sql) && sqlOf([one('access-x')]).sql.includes('audit_event_streams'));
+
+    const usesTable = (sql) => sql.includes('audit_event_streams');
+    for (const [name, query, options] of [
+      ['an uncovered id', [several(['access-x', 'action-y'])]],
+      ['a parent id', [several(['accesses', 'access-x', 'access-y'])]],
+      ['star', [several(['access-x', '*'])]],
+      ['a space', [several(['access-x', 'access-y action-z'])]],
+      ['types', [several(['access-x', 'access-y']), { type: 'typesList', content: ['audit-log/pryv-api-error'] }]],
+      ['too many', [several([...many, 'access-one-more'])]],
+      ['two blocks', [{ type: 'streamsQuery', content: [[{ any: ['access-x', 'access-y'] }], [{ any: ['access-z', 'access-w'] }]] }]],
+      ['deny', [several(['access-x', 'access-y'], { unknown: true })]],
+      ['deny, one id', [several(['access-x'], { unknown: true })]],
+      ['no sort', [several(['access-x', 'access-y'])], { limit: 20 }],
+      ['time or null', [several(['access-x', 'access-y']), { type: 'greaterOrEqualOrNull', content: { field: 'time', value: 1 } }]]
+    ]) {
+      const { sql } = sqlOf(query, options);
+      assert.ok(!usesTable(sql), name + ': ' + sql.slice(0, 120));
+    }
+    assert.ok(!usesTable(sqlOf([several(['access-x', 'access-y'])], undefined, false).sql), 'incomplete');
+    // A deny reads nothing: the plain statement with FALSE.
+    assert.match(sqlOf([several(['access-x', 'access-y'], { unknown: true })]).sql, /^SELECT \* FROM audit_events WHERE user_id = \$1 AND FALSE ORDER BY/);
+  });
+
+  it('[PGASO] the merged read returns the same rows in the same order as the plain one', async function () {
+    const u = newUser();
+    await seedEquivalence(u);
+    // `q0000` and every 6th record name both access-a and access-b.
+    const lists = {
+      two: ['access-a', 'access-b'],
+      three: ['access-a:1', 'access-b', 'access-a'],
+      nine: ['access-a', 'access-b', 'access-a:1', 'access-p%q_r', 'access-pxqyr', 'access-none1', 'access-none2', 'access-none3', 'access-none4'],
+      none: ['access-none1', 'access-none2'],
+      rare: ['access-p%q_r', 'access-none1']
+    };
+    const shapes = [];
+    for (const [key, ids] of Object.entries(lists)) {
+      shapes.push([key, [...BASE(), several(ids)]]);
+      shapes.push([key + ' not', [...BASE(), several(ids, { not: ['access-a:1'] })]]);
+      shapes.push([key + ' and access-b', [...BASE(), several(ids, { any: ['access-b', 'access-pxqyr'] })]]);
+      shapes.push([key + ' time', [...BASE(), several(ids), { type: 'lowerOrEqual', content: { field: 'time', value: 10_030 } },
+        { type: 'greaterOrEqual', content: { field: 'time', value: 10_005 } }]]);
+      shapes.push([key + ' greater', [...BASE(), several(ids), { type: 'greater', content: { field: 'time', value: 10_020 } }]]);
+      shapes.push([key + ' equal', [...BASE(), several(ids), { type: 'equal', content: { field: 'time', value: 10_010 } }]]);
+      shapes.push([key + ' all states', [several(ids)]]);
+    }
+    let compared = 0;
+    for (const [name, query] of shapes) {
+      for (const time of [-1, 1]) {
+        // Not vacuous: these shapes take the merge.
+        assert.ok(isMerge(buildSelectQuery(u, { query: structuredClone(query), options: { sort: { time } } }, true).sql), name);
+        for (const limit of [1, 3, 20, undefined]) {
+          for (const skip of [0, 1, 5, 500]) {
+            const options = { sort: { time }, limit, skip };
+            const plain = await read(u, query, options, false);
+            const indexed = await read(u, query, options, true);
+            assert.deepStrictEqual(indexed, plain, `${name} ${JSON.stringify(options)}`);
+            compared++;
+          }
+        }
+      }
+      const streamed = await readStreamed(u, query, { sort: { time: -1 }, limit: 7, skip: 2 }, true);
+      assert.deepStrictEqual(streamed, await readStreamed(u, query, { sort: { time: -1 }, limit: 7, skip: 2 }, false), name + ' streamed');
+      const whole = await readStreamed(u, query, { sort: { time: 1 } }, true);
+      assert.deepStrictEqual(whole, await readStreamed(u, query, { sort: { time: 1 } }, false), name + ' streamed, no limit');
+    }
+    assert.ok(compared > 1000, 'compared ' + compared);
+    const all = await read(u, [...BASE(), several(lists.two)], { sort: { time: -1 } }, true);
+    assert.ok(all.length > 80 && new Set(all).size === all.length, 'rows: ' + all.length);
+    assert.ok(all.includes('q0006'), 'a record of both ids is returned');
+  });
+
+  it('[PGASP] the merged read is an ordered merge of the key ranges, without a sort', async function () {
+    // 2 dense ids among 50, the other 48 without any record: a sort of every
+    // key of the dense ids is what a wrong plan does here. The plan follows
+    // the statistics: on a table this account fills (a few thousand rows) or
+    // whose visibility map is not set yet (never vacuumed), the planner sorts
+    // the dense ranges instead, which it costs as cheaper for a full read
+    // (it plans the DISTINCT ON subquery without the outer limit). So the
+    // account sits among other accounts' rows, vacuumed, as a running core's
+    // table is once autovacuum has passed.
+    const dense = ['access-d1', 'access-d2'];
+    const ids = [...dense, ...Array.from({ length: 48 }, (_, i) => 'access-e' + i)];
+    const seed = async (client, u, others) => {
+      await client.query(`INSERT INTO audit_events (user_id, eventid, stream_ids, type, time, created, modified)
+        SELECT $1, 'p' || i, CASE WHEN i % 3 = 0 THEN 'access-d1 access-d2' WHEN i % 3 = 1 THEN 'access-d1' ELSE 'access-z' END || ' action-y ..',
+          'audit-log/pryv-api', i / 10, i, i FROM generate_series(1, 6000) AS i`, [u]);
+      // Rows of other accounts, in the table only (what the plan reads).
+      await client.query(`INSERT INTO audit_event_streams (user_id, stream_id, time, eventid)
+        SELECT $1 || (i % 100), 'access-o' || (i % 7), i / 10, 'o' || i FROM generate_series(1, 200000) AS i`, [others]);
+      await client.query('VACUUM ANALYZE audit_events');
+      await client.query('VACUUM ANALYZE audit_event_streams');
+    };
+    const check = async (client, u, label) => {
+      for (const [time, direction] of [[-1, 'Backward'], [1, 'Forward']]) {
+        const { sql, values } = buildSelectQuery(u, {
+          query: [...BASE(), several(ids), { type: 'equal', content: { field: 'deleted', value: null } }, { type: 'equal', content: { field: 'head_id', value: null } }],
+          options: { sort: { time }, limit: 20 }
+        }, true);
+        const root = (await client.query('EXPLAIN (FORMAT JSON) ' + sql, values)).rows[0]['QUERY PLAN'][0].Plan;
+        const text = label + ' ' + direction + ': ' + JSON.stringify(root);
+        const nodes = [];
+        (function walk (n) { nodes.push(n); for (const c of n.Plans ?? []) walk(c); })(root);
+        assert.ok(!nodes.some((n) => /Sort/.test(n['Node Type'])), 'no sort: ' + text);
+        assert.ok(nodes.some((n) => n['Node Type'] === 'Unique'), 'a unique: ' + text);
+        const merges = nodes.filter((n) => n['Node Type'] === 'Merge Append');
+        assert.strictEqual(merges.length, 1, 'one merge append: ' + text);
+        assert.strictEqual(merges[0].Plans.length, ids.length, 'one child per id: ' + text);
+        for (const child of merges[0].Plans) {
+          assert.ok(/Index (Only )?Scan/.test(child['Node Type']) && child['Index Name'] === 'audit_event_streams_pkey' &&
+            child['Scan Direction'] === direction, 'each child reads the key ' + direction + ': ' + text);
+        }
+      }
+    };
+    // On the shared test tables (the other accounts' rows are this test's,
+    // removed with it).
+    const u = newUser();
+    await seed(db, u, newUser());
+    await check(db, u, 'shared');
+    // On fresh tables holding only these rows.
+    const client = await db.getClient();
+    const schema = 'pgasp_' + Math.random().toString(36).slice(2, 8);
+    try {
+      await client.query(`CREATE SCHEMA ${schema}`);
+      await client.query(`CREATE TABLE ${schema}.audit_events (LIKE public.audit_events INCLUDING ALL)`);
+      await client.query(`CREATE TABLE ${schema}.audit_event_streams (LIKE public.audit_event_streams INCLUDING ALL)`);
+      await client.query(`SET search_path TO ${schema}`);
+      // No trigger on these copies: the account's rows are written here.
+      await client.query(`INSERT INTO audit_event_streams (user_id, stream_id, time, eventid)
+        SELECT 'fresh', t, i / 10, 'p' || i FROM generate_series(1, 6000) AS i,
+          unnest(CASE WHEN i % 3 = 0 THEN ARRAY['access-d1', 'access-d2'] WHEN i % 3 = 1 THEN ARRAY['access-d1'] ELSE ARRAY[]::text[] END) AS t`);
+      await seed(client, 'fresh', 'other');
+      await check(client, 'fresh', 'fresh');
+    } finally {
+      await client.query('RESET search_path');
+      await client.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+      client.release();
+    }
+  });
+
+  it('[PGASQ] with several ids, a forged or stale row never returns a refused record, and a record of two ids comes once', async function () {
+    const u = newUser();
+    const v = newUser();
+    await put(u, 'mine', ['access-x', 'action-y'], 100);
+    await put(u, 'both', ['access-x', 'access-y', 'action-y'], 103);
+    await put(u, 'theirs', ['access-other', 'action-y'], 101);
+    await put(v, 'foreign', ['access-y', 'action-y'], 102);
+    // Under access-y: a row pointing at a record of u that names neither id,
+    // one at a record id only v has, and a stale copy of `mine` at another time.
+    await db.query('INSERT INTO audit_event_streams (user_id, stream_id, time, eventid) VALUES ($1, $2, 101, $3), ($1, $2, 102, $4), ($1, $2, 99, $5)',
+      [u, 'access-y', 'theirs', 'foreign', 'mine']);
+    for (const [time, expected] of [[-1, ['both', 'mine']], [1, ['mine', 'both']]]) {
+      for (const ids of [['access-x', 'access-y'], ['access-y', 'access-x', 'access-none']]) {
+        const query = [...BASE(), several(ids)];
+        assert.deepStrictEqual(await read(u, query, { sort: { time } }, true), expected, JSON.stringify(ids));
+        assert.deepStrictEqual(await readStreamed(u, query, { sort: { time } }, true), expected);
+        assert.deepStrictEqual(await read(u, query, { sort: { time }, limit: 1, skip: 1 }, true), expected.slice(1));
+      }
+    }
+  });
+
+  // The fill's database, recording the statements of its connection; a VACUUM
+  // fails on purpose when asked.
+  function recordingDb (statements, { failVacuum = false } = {}) {
+    return {
+      connectDedicated: async (name) => {
+        const client = await db.connectDedicated(name);
+        return {
+          query: (sql, params) => {
+            statements.push(sql);
+            if (failVacuum && sql.startsWith('VACUUM')) return Promise.reject(new Error('vacuum refused on purpose'));
+            return client.query(sql, params);
+          },
+          end: () => client.end()
+        };
+      }
+    };
+  }
+
+  it('[PGASR] a fill that did work ends with a VACUUM (ANALYZE) of the table; one whose VACUUM fails still completes; a complete state runs none', async function () {
+    const u = newUser();
+    await db.query(
+      'INSERT INTO audit_events (user_id, eventid, stream_ids, type, time, created, modified, trashed) ' +
+      'SELECT $1, \'v\' || lpad(i::text, 5, \'0\'), \'access-\' || (i % 3) || \' action-y ..\', \'audit-log/pryv-api\', 1000 + i, 1000 + i, 1000 + i, false ' +
+      'FROM generate_series(1, 3000) AS i', [u]);
+    const isVacuum = (sql) => sql === 'VACUUM (ANALYZE) audit_event_streams';
+    const logs = [];
+    const logger = { info: (m) => logs.push('info ' + m), warn: (m) => logs.push('warn ' + m) };
+
+    // From zero: the TRUNCATE leaves the table with no visibility map; the
+    // VACUUM runs once, before the state says complete.
+    await resetState();
+    const statements = [];
+    const res = await ensureAuditStreamIndex(recordingDb(statements), { logger, batchRows: 1000 });
+    assert.strictEqual(res.fromZero, true);
+    assert.strictEqual(statements.filter(isVacuum).length, 1, JSON.stringify(statements));
+    const completion = statements.findIndex((sql) => sql.includes('SET complete = true'));
+    assert.ok(completion > statements.findIndex(isVacuum), 'vacuumed before the completion');
+    const stats = (await db.query('SELECT relallvisible, reltuples FROM pg_class WHERE oid = \'audit_event_streams\'::regclass')).rows[0];
+    assert.ok(stats.relallvisible > 0, 'visibility map set: ' + JSON.stringify(stats));
+    assert.ok(stats.reltuples >= 3000, 'statistics set: ' + JSON.stringify(stats));
+    assert.ok(logs.some((l) => l.startsWith('info audit stream index: VACUUM (ANALYZE) audit_event_streams in ')), JSON.stringify(logs));
+
+    // A VACUUM that fails: warned, and the fill completes all the same.
+    await resetState();
+    logs.length = 0;
+    const failing = [];
+    const res2 = await ensureAuditStreamIndex(recordingDb(failing, { failVacuum: true }), { logger, batchRows: 1000 });
+    assert.strictEqual(res2.fromZero, true);
+    assert.strictEqual(failing.filter(isVacuum).length, 1);
+    assert.ok(logs.some((l) => l.startsWith('warn audit stream index: VACUUM (ANALYZE) audit_event_streams failed (vacuum refused on purpose)')), JSON.stringify(logs));
+    assert.deepStrictEqual(await state(), { complete: true, cursor_user_id: null, cursor_eventid: null });
+    assert.deepStrictEqual(await drift(), { missing: 0, extra: 0 });
+    assert.strictEqual((await junction(u)).length, 3000);
+
+    // Complete already: no VACUUM (every later start, and this suite's afterEach).
+    const later = [];
+    const res3 = await ensureAuditStreamIndex(recordingDb(later), { logger });
+    assert.strictEqual(res3.alreadyComplete, true);
+    assert.strictEqual(later.filter(isVacuum).length, 0, JSON.stringify(later));
+
+    // A resumed run with nothing left to read did no work: no VACUUM either.
+    const last = (await db.query('SELECT user_id, eventid FROM audit_events ORDER BY user_id DESC, eventid DESC LIMIT 1')).rows[0];
+    await db.query('UPDATE audit_event_streams_state SET complete = false, cursor_user_id = $1, cursor_eventid = $2, updated_at = now()',
+      [last.user_id, last.eventid]);
+    const idle = [];
+    const res4 = await ensureAuditStreamIndex(recordingDb(idle), { logger });
+    assert.strictEqual(res4.fromZero, false);
+    assert.strictEqual(res4.rows, 0);
+    assert.strictEqual(idle.filter(isVacuum).length, 0, JSON.stringify(idle));
+    assert.strictEqual((await state()).complete, true);
   });
 });
