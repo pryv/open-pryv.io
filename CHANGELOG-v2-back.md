@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Delegation origin, email resend cooldown view
+
+- delegation: anchors and mirrors store `origin` (`constants.ORIGIN`, model `DelegationOrigin`), written by
+  `createAccount` / `handleSystemCreateAccount` (`created`) and `requestAttach` / `handleSystemInvite`
+  (`attached`), and stamped `attached` on activation (`acceptAttach`, `handleAcceptResponse`) for invites written
+  before. `attach.originOf` reads it, falling back to the rule `requestedAt === activatedAt` for older records. No
+  storage migration: the records are plugin events whose content the event integrity hash covers, on both engines,
+  so a SQL rewrite would break the hashes; reading the rule keeps older records correct without a write.
+- business emails `container.ts`: `toView` / `listViews` return `EmailEntryView` (`EmailView` +
+  `verificationCooldownUntil`, the rule of the `resendVerification` cooldown check); `synthesizeFromLegacy` answers
+  `null`. api-server `accountMethods` result schema: the field is required on email entries.
+- Tests: delegation units `[DLOR1]`-`[DLOR4]`, api-server `[DLOI1]`-`[DLOI4]` (`delegation-origin.test.js`) and
+  `[EMCD1]`, `[EMCD2]` (`account-emails.test.js`).
+
 ### OAuth review over HTTP, current validation read
 
 - oauth2 `src/clientReview.ts`: `approveClient`, `withdrawReview`, `setClientStatus` and `decidePublisher`,

@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Delegation: how a relationship was made (`origin`)
+
+- Each item of `GET /{username}/delegations/controlled` (`delegations.listControlled`, the accounts a delegate
+  manages) and of `GET /{username}/delegations/delegates` (`delegations.listDelegates`, an account's delegates)
+  carries a read-only `origin`: `created` when the delegate created the account (`POST .../delegations/controlled`),
+  `attached` when the account invited an existing delegate (`POST .../delegations/attach-request`), whatever the
+  status. The core sets it when the relationship is made; an `origin` sent by a client is ignored. Relationships made
+  before this release are listed with the value of the rule `requestedAt === activatedAt` (`created`), else
+  `attached`; an invite made before it gets `attached` stored when it is accepted. (issue 174)
+
+### Account emails: the resend cooldown in `account.get`
+
+- Each entry of `account.emails[]` (`account.get`, and the result of `account.update`) carries
+  `verificationCooldownUntil`: the time (seconds since the epoch, like every API timestamp) until which a new
+  verification mail for the address is refused (`account.update { emails: { resend } }` answers
+  `invalid-operation` with `data.retryAfterSeconds` before it), or `null` when no cooldown is running (never sent,
+  last send failed, cooldown over or off, address proved). It is computed at read time from the last send and
+  `account.emailVerification.resendCooldownMs`, so a page reloaded during a cooldown can show it. The daily budget
+  of distinct addresses (`account-address-limit`) is not reflected.
+
 ### OAuth: app review and publisher decisions over HTTP
 
 - **`/system/admin/oauth`** serves the review acts of `bin/oauth-client.js` and the publisher decisions, for the

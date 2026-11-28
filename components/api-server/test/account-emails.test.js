@@ -110,6 +110,59 @@ describe('[EMLS] account emails (multiple)', function () {
     });
   });
 
+  describe('[EMCD] the resend cooldown in account.get', function () {
+    const COOLDOWN = { account: { emailVerification: { resendCooldownMs: 120000 } } };
+    const entryOf = (res, value) => res.body.account.emails.find((e) => e.value === value);
+
+    it('[EMCD1] an address mailed less than the cooldown ago carries the time until which a resend is refused', async function () {
+      const u = await makeUser(cuid() + '@cd-main.example.com');
+      const x = cuid() + '@cd-pending.example.com';
+      await withInjectedConfig(COOLDOWN, async () => {
+        await addPending(u, [x]);
+        const sentAt = (await container.findRawByValue(u.userId, x)).content.verificationSentAt;
+        assert.strictEqual(typeof sentAt, 'number');
+
+        const res = await getAccount(u);
+        assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+        const until = entryOf(res, x).verificationCooldownUntil;
+        assert.strictEqual(until, sentAt + 120, 'send time + cooldown, in seconds');
+        assert.strictEqual(res.body.account.emails.find((e) => e.primary).verificationCooldownUntil, null, 'nothing was mailed to the primary');
+
+        // The same answer the refused resend gives.
+        const resend = await updateAccount(u, { emails: { resend: [x] } });
+        assert.strictEqual(resend.status, 400, JSON.stringify(resend.body));
+        const retry = resend.body.error.data.retryAfterSeconds;
+        const expected = Math.ceil(until - Date.now() / 1000);
+        assert.ok(Math.abs(retry - expected) <= 1, 'retryAfterSeconds ' + retry + ' matches the field (' + expected + ')');
+      });
+    });
+
+    it('[EMCD2] the field is null once the cooldown is over, when it is off, and for a proved address', async function () {
+      const u = await makeUser(cuid() + '@cd-null.example.com');
+      const x = cuid() + '@cd-elapsed.example.com';
+      const y = cuid() + '@cd-proved.example.com';
+      await withInjectedConfig(COOLDOWN, async () => {
+        const minted = await addPending(u, [x, y]);
+        const ev = await container.findRawByValue(u.userId, x);
+        await container.setContent(u.userId, ev, { verificationSentAt: Date.now() / 1000 - 121 });
+        assert.strictEqual(await operations.verifyToken(u.userId, minted.find((m) => m.value === y).token, u.username), y);
+
+        const res = await getAccount(u);
+        assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+        assert.strictEqual(entryOf(res, x).verificationCooldownUntil, null, 'elapsed');
+        assert.strictEqual(entryOf(res, y).verificationCooldownUntil, null, 'proved');
+        // The resend is accepted again (the mail itself is off in tests).
+        const resend = await updateAccount(u, { emails: { resend: [x] } });
+        assert.strictEqual(resend.status, 200, JSON.stringify(resend.body));
+        assert.strictEqual(typeof entryOf(resend, x).verificationCooldownUntil, 'number', 'the resend starts a new cooldown, returned by account.update');
+      });
+      await withInjectedConfig({ account: { emailVerification: { resendCooldownMs: 0 } } }, async () => {
+        const res = await getAccount(u);
+        assert.strictEqual(entryOf(res, x).verificationCooldownUntil, null, 'cooldown off');
+      });
+    });
+  });
+
   describe('[EML2] add', function () {
     it('[EML21] adds pending, non-primary emails and reflects them in account.get', async function () {
       const u = await makeUser(cuid() + '@add.example.com');

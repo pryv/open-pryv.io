@@ -37,7 +37,7 @@ import * as C from './constants.ts';
 import { DelegationErrorIds } from './errorIds.ts';
 import * as store from './store.ts';
 import type { MallLike } from './store.ts';
-import type { AnchorContent, MirrorContent } from './model.ts';
+import type { AnchorContent, MirrorContent, DelegationOrigin } from './model.ts';
 
 // ------------------------------------------------------------------ error type
 
@@ -201,6 +201,7 @@ async function requestAttach (deps: RequestAttachDeps, params: {
     relId,
     delegate: delegateRef,
     status: C.STATUS.INVITE,
+    origin: C.ORIGIN.ATTACHED,
     requestedAt,
   };
   if (typeof params.purpose === 'string' && params.purpose.length > 0) anchorContent.purpose = params.purpose;
@@ -292,6 +293,7 @@ async function handleSystemInvite (deps: SystemInviteDeps, payload: InvitePayloa
     relId: payload.relId,
     controlled: { username: payload.controlled.username, hostSlug: payload.controlled.hostSlug },
     status: C.STATUS.INVITE,
+    origin: C.ORIGIN.ATTACHED,
     capabilityUrl: payload.capabilityUrl,
     requestedAt: now(),
   };
@@ -381,6 +383,8 @@ async function acceptAttach (deps: AcceptRefuseDeps, params: {
     activatedAt,
     controlApiEndpoint: body.controlApiEndpoint,
     capabilityUrl: undefined,
+    // An invite recorded before the origin was stored gets it on activation.
+    origin: C.ORIGIN.ATTACHED,
   });
 
   // Best-effort accept-complete: release the invite capability on B now that A's
@@ -541,6 +545,8 @@ async function handleAcceptResponse (deps: ControlledSideDeps, params: {
       activatedAt,
       notifyApiEndpoint: params.notifyApiEndpoint,
       controlAccessId: control.id,
+      // An invite recorded before the origin was stored gets it on activation.
+      origin: C.ORIGIN.ATTACHED,
       ...delegateIdPatch,
     });
   } catch (err) {
@@ -758,6 +764,17 @@ async function cancelInvite (deps: CancelDeps, params: {
 
 // ================================================================== lists
 
+/**
+ * How a relationship was made: the stored `origin`, else, for a record written
+ * before it was stored, the rule those records follow: the create path
+ * requests and activates at the same instant, the invite path never does
+ * (requested at the invite, activated at the accept, if ever).
+ */
+function originOf (c: { origin?: unknown; requestedAt?: number; activatedAt?: number }): DelegationOrigin {
+  if (c.origin === C.ORIGIN.CREATED || c.origin === C.ORIGIN.ATTACHED) return c.origin;
+  return (c.requestedAt != null && c.requestedAt === c.activatedAt) ? C.ORIGIN.CREATED : C.ORIGIN.ATTACHED;
+}
+
 async function listDelegates (mall: MallLike, bUserId: string): Promise<{ delegates: Array<Record<string, unknown>> }> {
   const anchors = await store.listAnchors(mall, bUserId);
   const delegates = anchors.map((a) => {
@@ -766,6 +783,7 @@ async function listDelegates (mall: MallLike, bUserId: string): Promise<{ delega
       relId: c.relId,
       delegate: { username: c.delegate.username, hostSlug: c.delegate.hostSlug },
       status: c.status,
+      origin: originOf(c),
       requestedAt: c.requestedAt,
       activatedAt: c.activatedAt,
       lastTokenIssuedAt: c.lastTokenIssuedAt,
@@ -782,6 +800,7 @@ async function listControlled (mall: MallLike, aUserId: string): Promise<{ contr
       relId: c.relId,
       controlled: { username: c.controlled.username, hostSlug: c.controlled.hostSlug },
       status: c.status,
+      origin: originOf(c),
       requestedAt: c.requestedAt,
       activatedAt: c.activatedAt,
     };
@@ -809,6 +828,7 @@ export {
   cancelInvite,
   listDelegates,
   listControlled,
+  originOf,
 };
 export type {
   Identity,

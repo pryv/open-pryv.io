@@ -280,4 +280,18 @@ describe('delegation create-from-delegate', function () {
     const controls = (await mall.accesses.get(USER_B)).filter((a) => a.clientData?.delegation?.kind === C.CLIENTDATA_KIND.CONTROL);
     assert.equal(controls.length, 0, 'no control access left on B');
   });
+
+  it('[DLOR1] a created relationship is stored and listed as "created" on both sides', async function () {
+    const mall = makeFakeMall();
+    const { systemDeps } = makeProvisioning(mall);
+    const res = await createAccountMod.createAccount(createDeps(mall, systemDeps), {
+      aUserId: USER_A, aUsername: NAME_A, username: NAME_B, core: undefined,
+    });
+    const relId = res.delegation.relId;
+    assert.equal((await store.findAnchorByRelId(mall, USER_B, relId)).content.origin, C.ORIGIN.CREATED, 'stored on the anchor (B)');
+    assert.equal((await store.findMirrorByRelId(mall, USER_A, relId)).content.origin, C.ORIGIN.CREATED, 'stored on the mirror (A)');
+    const attach = require('../src/attach.ts');
+    assert.equal((await attach.listDelegates(mall, USER_B)).delegates[0].origin, C.ORIGIN.CREATED);
+    assert.equal((await attach.listControlled(mall, USER_A)).controlled[0].origin, C.ORIGIN.CREATED);
+  });
 });

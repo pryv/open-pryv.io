@@ -25,9 +25,12 @@ const emailEntry = helpers.object({
   // Explicit provenance. `null` is grandfathered pre-provenance data (read-only);
   // only 'email-link' / 'email-code' / 'operator' count as proved ownership
   // (the source of truth is PROVED_METHODS in business/src/emails/constants.ts).
-  verificationMethod: helpers.string({ nullable: true, enum: ['email-link', 'email-code', 'operator', 'registration', 'legacy', null] })
+  verificationMethod: helpers.string({ nullable: true, enum: ['email-link', 'email-code', 'operator', 'registration', 'legacy', null] }),
+  // Until when (seconds) a new verification mail for the address is refused
+  // (the resend cooldown); null when none is running. Computed at read time.
+  verificationCooldownUntil: helpers.number({ nullable: true })
 }, {
-  required: ['value', 'primary', 'status', 'verifiedAt', 'verificationMethod'],
+  required: ['value', 'primary', 'status', 'verifiedAt', 'verificationMethod', 'verificationCooldownUntil'],
   additionalProperties: false
 });
 

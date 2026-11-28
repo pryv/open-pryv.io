@@ -33,6 +33,16 @@ type EmailView = {
 };
 
 /**
+ * An entry as the account methods return it: the stored view plus
+ * `verificationCooldownUntil`, computed at read time (never stored): the time
+ * (seconds) until which a new verification mail for the address is refused,
+ * null when no cooldown is running.
+ */
+type EmailEntryView = EmailView & {
+  verificationCooldownUntil: number | null;
+};
+
+/**
  * Raw stored content of a container event. Extends the public {@link EmailView}
  * with the internal verification-token fields: a
  * pending email carries the sha256 HASH of its emailed token (never the token
@@ -123,15 +133,31 @@ async function findRawByValue (userId: string, value: string): Promise<EventLike
   return events.find((e) => e.content?.value === value) ?? null;
 }
 
-/** Project a stored event to its public view. */
-function toView (event: EventLike): EmailView {
+/**
+ * The time (seconds) until which a resend for this entry is refused, the
+ * same rule as the cooldown check of `resendVerification` (operations.ts):
+ * the last send plus the cooldown, while it is still ahead. Null when no mail
+ * is on record (never sent, or the send failed), the address is proved, the
+ * cooldown is off, or it has elapsed.
+ */
+function cooldownUntil (c: EmailRecordContent, cooldownMs: number, now: number): number | null {
+  if (cooldownMs <= 0 || C.isProvedOwnership(c)) return null;
+  const sentAt = c.verificationSentAt;
+  if (typeof sentAt !== 'number') return null;
+  const until = sentAt + cooldownMs / 1000;
+  return now < until ? until : null;
+}
+
+/** Project a stored event to its public view (`cooldownMs`: the resend cooldown, 0 for none). */
+function toView (event: EventLike, cooldownMs = 0, now: number = timestamp.now()): EmailEntryView {
   const c = event.content;
   return {
     value: c.value,
     primary: c.primary === true,
     status: c.status,
     verifiedAt: c.verifiedAt ?? null,
-    verificationMethod: c.verificationMethod ?? null
+    verificationMethod: c.verificationMethod ?? null,
+    verificationCooldownUntil: cooldownUntil(c, cooldownMs, now)
   };
 }
 
@@ -140,25 +166,28 @@ function toView (event: EventLike): EmailView {
  * primary from the legacy field when the container is empty (existing users
  * whose container has not been seeded yet).
  */
-async function listViews (userId: string, legacyEmail: string | null | undefined): Promise<EmailView[]> {
+async function listViews (userId: string, legacyEmail: string | null | undefined): Promise<EmailEntryView[]> {
   const events = await getRawEvents(userId);
   if (events.length === 0) {
     if (legacyEmail == null) return [];
     return [synthesizeFromLegacy(legacyEmail)];
   }
-  return events.map(toView);
+  const cooldownMs = await getResendCooldownMs();
+  const now = timestamp.now();
+  return events.map((e) => toView(e, cooldownMs, now));
 }
 
 /** The view a legacy singular email presents as when no container event exists.
  *  It is the account's founding email — asserted at registration trust, not
  *  link-proved (verifiedAt stays null, so it reads as NOT proved). */
-function synthesizeFromLegacy (legacyEmail: string): EmailView {
+function synthesizeFromLegacy (legacyEmail: string): EmailEntryView {
   return {
     value: legacyEmail,
     primary: true,
     status: C.STATUS_VERIFIED,
     verifiedAt: null,
-    verificationMethod: C.METHOD_REGISTRATION
+    verificationMethod: C.METHOD_REGISTRATION,
+    verificationCooldownUntil: null
   };
 }
 
@@ -305,4 +334,4 @@ export {
   markVerified,
   stampVerification
 };
-export type { EmailView, EmailRecordContent, EventLike };
+export type { EmailView, EmailEntryView, EmailRecordContent, EventLike };

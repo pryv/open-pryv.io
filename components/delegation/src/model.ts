@@ -18,6 +18,15 @@
 /** Relationship lifecycle status. Mirrors constants.STATUS values. */
 type DelegationStatus = 'invite' | 'active' | 'stale';
 
+/**
+ * How the relationship was made. Mirrors constants.ORIGIN values: `created`
+ * when the delegate created the controlled account (active at birth),
+ * `attached` when the account asked an existing delegate (the invite
+ * handshake). Set by the plugin when the relationship is made, never by a
+ * client. Absent on records written before it was stored: see `originOf`.
+ */
+type DelegationOrigin = 'created' | 'attached';
+
 /** Reference to a delegate account (the account being controlled). */
 type DelegateRef = {
   username: string;
@@ -47,6 +56,7 @@ type AnchorContent = {
   relId: string;
   delegate: DelegateRef;
   status: DelegationStatus;
+  origin?: DelegationOrigin;
   requestedAt: number;
   activatedAt?: number;
   notifyApiEndpoint?: string;
@@ -69,6 +79,7 @@ type MirrorContent = {
   relId: string;
   controlled: ControlledRef;
   status: DelegationStatus;
+  origin?: DelegationOrigin;
   capabilityUrl?: string;
   controlApiEndpoint?: string;
   requestedAt?: number;
@@ -87,6 +98,7 @@ type ClientDataDelegation =
 
 export type {
   DelegationStatus,
+  DelegationOrigin,
   DelegateRef,
   ControlledRef,
   AnchorContent,

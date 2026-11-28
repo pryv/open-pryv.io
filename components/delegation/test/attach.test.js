@@ -662,3 +662,77 @@ describe('[DACK] the host\'s say on an accept', function () {
     assert.equal(await markerOf(mall, USER_A, req.relId, C.CLIENTDATA_KIND.NOTIFY), null, 'no notify access left');
   });
 });
+
+describe('[DLOR] delegation relationship origin (attach path)', function () {
+  beforeEach(function () { seq = 0; });
+
+  it('[DLOR2] an attached relationship is recorded and listed as "attached" on both sides, before and after the accept', async function () {
+    const mall = makeFakeMall();
+    const req = await attach.requestAttach(requestDeps(mall), { bUserId: USER_B, bUsername: NAME_B, delegateUsername: NAME_A });
+    assert.equal((await anchorFor(mall, NAME_A)).content.origin, C.ORIGIN.ATTACHED, 'stored on the anchor at the request');
+    assert.equal((await store.findMirrorByRelId(mall, USER_A, req.relId)).content.origin, C.ORIGIN.ATTACHED, 'stored on the mirror at the invite');
+    assert.equal((await attach.listDelegates(mall, USER_B)).delegates[0].origin, C.ORIGIN.ATTACHED);
+    assert.equal((await attach.listControlled(mall, USER_A)).controlled[0].origin, C.ORIGIN.ATTACHED);
+
+    // The fake clock never moves: requested and activated at the same instant,
+    // which the rule for older records would read as "created". The stored
+    // origin decides.
+    await attach.acceptAttach(acceptDeps(mall), { aUserId: USER_A, aUsername: NAME_A, controlledUsername: NAME_B });
+    const delegates = (await attach.listDelegates(mall, USER_B)).delegates;
+    const controlled = (await attach.listControlled(mall, USER_A)).controlled;
+    assert.equal(delegates[0].status, C.STATUS.ACTIVE);
+    assert.equal(delegates[0].requestedAt, delegates[0].activatedAt, 'same instant under the fake clock');
+    assert.equal(delegates[0].origin, C.ORIGIN.ATTACHED);
+    assert.equal(controlled[0].origin, C.ORIGIN.ATTACHED);
+  });
+
+  it('[DLOR3] an invite recorded without an origin gets "attached" stored when it is accepted', async function () {
+    const mall = makeFakeMall();
+    const req = await attach.requestAttach(requestDeps(mall), { bUserId: USER_B, bUsername: NAME_B, delegateUsername: NAME_A });
+    // As written before the origin was stored.
+    const anchor = await anchorFor(mall, NAME_A);
+    delete anchor.content.origin;
+    const mirror = await store.findMirrorByRelId(mall, USER_A, req.relId);
+    delete mirror.content.origin;
+
+    await attach.acceptAttach(acceptDeps(mall), { aUserId: USER_A, aUsername: NAME_A, controlledUsername: NAME_B });
+    assert.equal((await anchorFor(mall, NAME_A)).content.origin, C.ORIGIN.ATTACHED);
+    assert.equal((await store.findMirrorByRelId(mall, USER_A, req.relId)).content.origin, C.ORIGIN.ATTACHED);
+  });
+
+  it('[DLOR4] records without a stored origin are read with the rule requestedAt === activatedAt', async function () {
+    const mall = makeFakeMall();
+    const t = 1_700_000_000;
+    const anchors = [
+      { relId: 'r-created', delegate: { username: 'd1', hostSlug: HOST_SLUG }, status: C.STATUS.ACTIVE, requestedAt: t, activatedAt: t },
+      { relId: 'r-attached', delegate: { username: 'd2', hostSlug: HOST_SLUG }, status: C.STATUS.ACTIVE, requestedAt: t, activatedAt: t + 30 },
+      { relId: 'r-invite', delegate: { username: 'd3', hostSlug: HOST_SLUG }, status: C.STATUS.INVITE, requestedAt: t },
+      { relId: 'r-stale-created', delegate: { username: 'd4', hostSlug: HOST_SLUG }, status: C.STATUS.STALE, requestedAt: t, activatedAt: t },
+      // A stored origin wins over the rule; an unknown stored value does not.
+      { relId: 'r-stored', delegate: { username: 'd5', hostSlug: HOST_SLUG }, status: C.STATUS.ACTIVE, origin: C.ORIGIN.ATTACHED, requestedAt: t, activatedAt: t },
+      { relId: 'r-bogus', delegate: { username: 'd6', hostSlug: HOST_SLUG }, status: C.STATUS.ACTIVE, origin: 'other', requestedAt: t, activatedAt: t },
+    ];
+    for (const a of anchors) await store.createAnchor(mall, USER_B, a, nowSeconds);
+    const mirrors = [
+      { relId: 'm-created', controlled: { username: 'c1', hostSlug: HOST_SLUG }, status: C.STATUS.ACTIVE, requestedAt: t, activatedAt: t },
+      { relId: 'm-attached', controlled: { username: 'c2', hostSlug: HOST_SLUG }, status: C.STATUS.ACTIVE, requestedAt: t, activatedAt: t + 1 },
+      { relId: 'm-no-times', controlled: { username: 'c3', hostSlug: HOST_SLUG }, status: C.STATUS.INVITE },
+    ];
+    for (const m of mirrors) await store.createMirror(mall, USER_A, m, nowSeconds);
+
+    const byRel = (list) => Object.fromEntries(list.map((x) => [x.relId, x.origin]));
+    assert.deepEqual(byRel((await attach.listDelegates(mall, USER_B)).delegates), {
+      'r-created': 'created',
+      'r-attached': 'attached',
+      'r-invite': 'attached',
+      'r-stale-created': 'created',
+      'r-stored': 'attached',
+      'r-bogus': 'created',
+    });
+    assert.deepEqual(byRel((await attach.listControlled(mall, USER_A)).controlled), {
+      'm-created': 'created',
+      'm-attached': 'attached',
+      'm-no-times': 'attached',
+    });
+  });
+});

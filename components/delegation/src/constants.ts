@@ -140,6 +140,12 @@ const STATUS = {
   STALE: 'stale',
 } as const;
 
+// How a relationship was made (see model.ts `DelegationOrigin`).
+const ORIGIN = {
+  CREATED: 'created',
+  ATTACHED: 'attached',
+} as const;
+
 // The author (`modifiedBy`) the plugin records on the events it updates
 // itself: the platform's reserved access id, never the id of a real access.
 const SYSTEM_ACCESS_ID = 'system';
@@ -169,6 +175,7 @@ export {
   // clientData discriminators + statuses
   CLIENTDATA_KIND,
   STATUS,
+  ORIGIN,
 
   // server-side writes
   SYSTEM_ACCESS_ID,
