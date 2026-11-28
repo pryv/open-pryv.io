@@ -254,7 +254,9 @@ describe('[AUG] accesses usage for the owner', function () {
     const ON_PURPOSE = ['account.restored', 'admin.role.granted', 'admin.role.revoked', 'admin.act', 'account.readByAdmin',
       'system.certs.renew', 'system.mail.sendTest', 'system.users.validate', 'system.delegation.invite', 'system.cores.ack',
       // acts of the shell tool and admin-key writes under /reg (platform trail only)
-      'admin.cli.setup.finished', 'admin.cli.role.granted', 'admin.cli.sessions.revoked', 'system.reg.servers.rename'];
+      'admin.cli.setup.finished', 'admin.cli.role.granted', 'admin.cli.sessions.revoked', 'system.reg.servers.rename',
+      // app review acts over /system/admin/oauth
+      'system.oauthClients.approve', 'system.oauthClients.unvalidate', 'system.oauthClients.suspend', 'system.oauthClients.resume'];
     const others = ALL_METHODS.filter((m) => classifyMethod(m) === 'other' && !ON_PURPOSE.includes(m));
     assert.deepEqual(others, [], 'classify these on purpose: ' + others.join(', '));
   });
