@@ -256,7 +256,7 @@ export default function adminStoreConformance (getDB) {
       await sleep(60);
       assert.equal(await roles.claimRole(db, minted.code, { userId: 'cuserlate', now: Date.now() }), null);
       await assert.rejects(roles.mintClaimCode(db, { role: 'owner', scope: 'platform', mintedBy: 'admin-key', now: Date.now(), ttlMs: 25 * HOUR }), /24 h/);
-      await assert.rejects(roles.mintClaimCode(db, { role: 'operator', scope: 'platform', mintedBy: 'admin-key', now: Date.now() }), /unknown role/);
+      await assert.rejects(roles.mintClaimCode(db, { role: 'superuser', scope: 'platform', mintedBy: 'admin-key', now: Date.now() }), /unknown role/);
       await assert.rejects(roles.mintClaimCode(db, { role: 'owner', scope: 'core:x', mintedBy: 'admin-key', now: Date.now() }), /unknown scope/);
     });
 
