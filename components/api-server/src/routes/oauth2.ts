@@ -38,6 +38,7 @@ import type { Application as ExpressApp } from 'express';
 import type { AppLike } from './_types.ts';
 import type { Ctx, OAuthMethodResult, GlueEnv } from './oauth2/types.ts';
 import { createRequire } from 'node:module';
+import { SESSION_NAME_PREFIX } from './oauth2/types.ts';
 import type { WrongCore } from './oauth2/wrongCore.ts';
 import { wrongCoreOf } from './oauth2/wrongCore.ts';
 import { platformRoutedLabels } from '../platformLabels.ts';
@@ -187,6 +188,31 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
   }
 
   // ---------------------------------------------------------------------
+  // listHeldClientIds: the clients the signed-in account's accesses were
+  // minted for, told by the server-owned `clientData.oauth` only (the API
+  // refuses it from any caller, while an access name is the owner's to
+  // choose): a consent grant's `grantOf`, and a session: an `app` access
+  // named `oauth:<clientId>` (which cannot be renamed) carrying its
+  // `dataGrantId`. A shared access an OAuth session created carries that
+  // stamp too, under a name the app chose: it never counts. Expired ones count.
+  // ---------------------------------------------------------------------
+  async function listHeldClientIds (session: { _context?: unknown }): Promise<Set<string>> {
+    const context = session._context as Ctx | undefined;
+    if (context == null) throw new Error('oauth2.listHeldClientIds: session missing _context');
+    const result = await apiRead(context, 'accesses.get', { includeExpired: true });
+    const held = new Set<string>();
+    for (const a of result?.accesses ?? []) {
+      const oauth = a?.clientData?.oauth;
+      if (typeof oauth?.grantOf === 'string' && oauth.grantOf.length > 0) held.add(oauth.grantOf);
+      if (a.type === 'app' && typeof oauth?.dataGrantId === 'string' && typeof a.name === 'string' && a.name.startsWith(SESSION_NAME_PREFIX) &&
+          a.name.length > SESSION_NAME_PREFIX.length) {
+        held.add(a.name.slice(SESSION_NAME_PREFIX.length));
+      }
+    }
+    return held;
+  }
+
+  // ---------------------------------------------------------------------
   // The operator's OAuth extension (customExtensions:oauthExtension), loaded
   // at mount: a broken module fails the boot, not a user's first consent.
   // ---------------------------------------------------------------------
@@ -244,6 +270,7 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     resolveUser,
     createAccess: grants.createAccess,
     readRegistryGrant: grants.readRegistryGrant,
+    listHeldClientIds,
     readSubjectSession: sessions.readSubjectSession,
     issueDerivedSession: sessions.issueDerivedSession,
     isPlatformRoutedLabel,
