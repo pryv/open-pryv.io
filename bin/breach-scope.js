@@ -13,7 +13,8 @@
 // that subject's audit rows for the access over the window, and renders the
 // technical inputs for a breach notification (subjects affected, records
 // affected, categories of data by stream scope, plus operator-narrative
-// placeholders) as JSON and/or Markdown.
+// placeholders) as JSON and/or Markdown; plus the administration acts on that
+// subject in the window, read from this core's platform trail (`platformTrail`).
 //
 // Read-only and in-process, like the other operator tools here: it needs no
 // API credential — possession of core-local config + storage IS the operator
@@ -188,6 +189,10 @@ require('@pryv/boiler').init({
     };
     const report = buildReport(auditRows || [], accessRow, entry, meta);
 
+    // 5b. The administration acts on this account in the window, from this
+    // core's platform trail (where an administrator's read of it is recorded).
+    report.platformTrail = await platformTrailOf(config, auditStorage, { userId, username, sinceTs, untilTs }, trace);
+
     // 6b. Best-effort stream-name resolution for LOCAL streams (the mall layer
     // maps stream ids -> names). Any failure or a since-deleted id degrades to
     // id-only with resolvedAtReportTime:false; resolution must NEVER fail the
@@ -245,6 +250,63 @@ require('@pryv/boiler').init({
     process.exit(1);
   }
 })();
+
+/**
+ * The records of this core's platform trail whose target is the account (its
+ * id, or the keyed hash of its name), in the window, oldest first: when, which
+ * act, done or refused, who acted. `available: false` with the reason when
+ * this core keeps no trail, or when this process should not open it.
+ */
+async function platformTrailOf (config, auditStorage, { userId, username, sinceTs, untilTs }, trace) {
+  const trail = require('../components/api-server/src/methods/systemAdminAudit.ts');
+  if (config.get('audit:active') !== true || !trail.keepsPlatformTrail(auditStorage)) {
+    return { available: false, reason: 'this core keeps no platform trail (audit is off, or its audit storage does not keep the trail)', records: [] };
+  }
+  const fileProblem = trail.trailFileProblem(auditStorage);
+  if (fileProblem?.absent === true) return { available: true, records: [] };
+  if (fileProblem?.otherOwner != null) {
+    return { available: false, reason: 'the trail file belongs to the OS user with uid ' + fileProblem.otherOwner + ': run this tool as that user', records: [] };
+  }
+  const { accountNameHash } = require('../components/business/src/admin/accountNames.ts');
+  const byName = accountNameHash(username, config) != null;
+  const found = new Map();
+  let truncated = false;
+  // By id, then by name hash (a record of a refused act may name the account by its name only).
+  for (const filter of [{ target: userId }, ...(byName ? [{ targetUsername: username }] : [])]) {
+    let toTime = untilTs;
+    let skip = 0;
+    for (let pages = 0; ; pages++) {
+      if (pages >= 100) { truncated = true; break; }
+      const page = await trail.readPlatformTrail(auditStorage, { ...filter, fromTime: sinceTs, toTime, limit: trail.AUDIT_READ_MAX_LIMIT, skip });
+      for (const e of page.events) if (e.id != null) found.set(e.id, e);
+      if (!page.hasMore) break;
+      if (page.scanLimitReached === true) {
+        if (page.scannedToTime == null) { truncated = true; break; }
+        toTime = page.scannedToTime;
+        skip = 0;
+      } else if (skip + trail.AUDIT_READ_MAX_LIMIT > trail.AUDIT_READ_MAX_SKIP) {
+        const last = page.events[page.events.length - 1];
+        if (last?.time == null) { truncated = true; break; }
+        toTime = last.time;
+        skip = 0;
+      } else {
+        skip += trail.AUDIT_READ_MAX_LIMIT;
+      }
+    }
+  }
+  const records = [...found.values()].sort((a, b) => (a.time ?? 0) - (b.time ?? 0)).map((e) => {
+    const action = (e.streamIds ?? []).map(String).find((s) => s.startsWith('action-'));
+    const s = e.content?.record?.subject ?? {};
+    return {
+      time: e.time,
+      methodId: action != null ? action.slice('action-'.length) : null,
+      outcome: String(e.type ?? '').includes('error') ? 'refused' : 'done',
+      subject: { via: s.via ?? null, userId: s.userId ?? null, role: s.role ?? null, scope: s.scope ?? null }
+    };
+  });
+  trace('platform-trail records on the account: ' + records.length);
+  return truncated ? { available: true, records, truncated: true } : { available: true, records };
+}
 
 function usageError (msg) {
   const e = new Error(msg);

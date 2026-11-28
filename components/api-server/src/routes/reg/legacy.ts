@@ -30,7 +30,7 @@ const MAX_INVITATIONS_PER_CALL = 1000;
 
 type App = { config: { get (key: string): unknown } };
 type UserCore = { coreId: string; username: string };
-type UsersRepoLike = { usernameExists: (username: string) => Promise<boolean>; count: () => Promise<number> };
+type UsersRepoLike = { usernameExists: (username: string) => Promise<boolean>; count: () => Promise<number>; getUserIdForUsername: (username: string) => Promise<string | null | undefined> };
 
 export default function (expressApp: ExpressApp, app: App) {
   const domain = app.config.get('dns:domain') as string;
@@ -212,16 +212,21 @@ export default function (expressApp: ExpressApp, app: App) {
 
   /**
    * GET /admin/users/:username — get user details (system role).
+   * A read of an account's data: recorded in the platform trail (and in the
+   * account's trail when it is on this core), as `system.getUserInfo`.
    */
-  expressApp.get('/reg/admin/users/:username', checkAdmin, async (req: Request, res: Response, next: NextFunction) => {
+  expressApp.get('/reg/admin/users/:username', checkAdmin, adminKeyAct('system.reg.users.get', app.config), adminRoute(), async (req: Request, res: Response, next: NextFunction) => {
     try {
       const username = req.params.username as string;
+      setRouteAct(res, { target: { username: String(username).slice(0, 256) } });
       const usersRepo = await getUsersRepository();
       if (!await usersRepo.usernameExists(username)) {
         return res.status(404).json({
           error: { id: 'unknown-user', message: 'User not found' }
         });
       }
+      const userId = await usersRepo.getUserIdForUsername(username.toLowerCase()).catch(() => null);
+      if (typeof userId === 'string') setRouteAct(res, { targetUserId: userId, targetAction: 'account.readByAdmin' });
       const { getPlatform } = require('platform');
       const platform = await getPlatform();
       const systemStreams = require('business/src/system-streams/index.ts');
@@ -279,10 +284,13 @@ export default function (expressApp: ExpressApp, app: App) {
 
   /**
    * GET /admin/servers/:serverName/users — list users on a specific core.
+   * A read of account data (their names): recorded in the platform trail,
+   * with the core asked and how many accounts were answered.
    */
-  expressApp.get('/reg/admin/servers/:serverName/users', checkAdmin, async (req: Request, res: Response, next: NextFunction) => {
+  expressApp.get('/reg/admin/servers/:serverName/users', checkAdmin, adminKeyAct('system.reg.servers.users.list', app.config), adminRoute(), async (req: Request, res: Response, next: NextFunction) => {
     try {
       const serverName = req.params.serverName;
+      setRouteAct(res, { target: { core: String(serverName).slice(0, 256) } });
       const { getPlatform } = require('platform');
       const platform = await getPlatform();
       const allUserCores = await getPlatformDB().getAllUserCores();
@@ -295,6 +303,7 @@ export default function (expressApp: ExpressApp, app: App) {
       );
 
       if (!matchingCore) {
+        setRouteAct(res, { result: { count: 0 } });
         return res.json({ users: [] });
       }
 
@@ -302,6 +311,7 @@ export default function (expressApp: ExpressApp, app: App) {
         .filter((uc: UserCore) => uc.coreId === matchingCore.id)
         .map((uc: UserCore) => ({ username: uc.username }));
 
+      setRouteAct(res, { result: { count: users.length } });
       res.json({ users });
     } catch (err) {
       next(err);

@@ -82,7 +82,8 @@ export const KEYS = Object.freeze({
   adminSessionPrefix: 'admin-session/',
   adminSessionEndedPrefix: 'admin-session-ended/',
   setupAttemptsPrefix: 'setup-attempts/',
-  claimAttemptsPrefix: 'admin-claim-attempts/'
+  claimAttemptsPrefix: 'admin-claim-attempts/',
+  sessionRefusalsPrefix: 'admin-session-refusals/'
 });
 
 /** Ids used in keys: a user id or a core id (letters, digits, `-`, `_`, `.`). */

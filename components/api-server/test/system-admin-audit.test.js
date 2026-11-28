@@ -112,7 +112,13 @@ describe('[SYAU] platform trail, attribution, trail read and users paging', func
 
     since = now();
     assert.equal((await coreRequest.get('/system/user-info/' + target.username).set(asSession(token))).status, 200);
-    [rec] = await trail(PLATFORM_TRAIL_USER_ID, 'system.getUserInfo', since);
+    // The first call's record may be written after `since`: the session's one is picked by its access.
+    for (let i = 0; i < 100; i++) {
+      [rec] = (await trail(PLATFORM_TRAIL_USER_ID, 'system.getUserInfo', since)).filter((e) => e.streamIds.includes('access-admin-session'));
+      if (rec != null) break;
+      await pause(50);
+    }
+    assert.ok(rec != null, 'the session\'s call is in the platform trail');
     assert.ok(rec.streamIds.includes('access-admin-session'), JSON.stringify(rec.streamIds));
     const subject = rec.content.record.subject;
     assert.equal(subject.via, 'session');
@@ -282,7 +288,10 @@ describe('[SYAU] platform trail, attribution, trail read and users paging', func
     const [listed] = await trail(PLATFORM_TRAIL_USER_ID, 'system.listUsers', since);
     assert.ok(listed != null, 'an administration act is kept');
     assert.ok(!JSON.stringify(listed).includes('syauprefix'), 'a username prefix is not kept in clear');
-    if (listed.content.query != null) assert.equal(listed.content.query.searchHash, nameHashOf('syauprefix'));
+    if (listed.content.query != null) {
+      assert.equal(listed.content.query.search, true, 'a search was used, nothing of it is kept');
+      assert.equal(listed.content.query.searchHash, undefined);
+    }
     assert.equal((await trail(PLATFORM_TRAIL_USER_ID, 'auth.register', since, 0)).length, 0, 'public traffic: syslog only');
     assert.equal((await trail(PLATFORM_TRAIL_USER_ID, 'system.setup.createSession', since, 0)).length, 0, 'a refused setup code: syslog only');
     // Opt in.
@@ -424,6 +433,116 @@ describe('[SYAU] platform trail, attribution, trail read and users paging', func
     for (const m of ['system.reg.invitations.create', 'system.reg.records.set']) {
       assert.equal((await trail(PLATFORM_TRAIL_USER_ID, m, since, 0)).length, 0, m + ': an unauthorized call is not recorded');
     }
+  });
+
+  it('[SYAU13] admin-key reads of account data under /reg (an account\'s details, the names of a core\'s accounts) are recorded, never with a name in clear; the account\'s own trail has the read', async () => {
+    const target = await freshUser('syaureg');
+    let since = now();
+    const one = await coreRequest.get('/reg/admin/users/' + target.username).set('authorization', adminKey);
+    assert.equal(one.status, 200, JSON.stringify(one.body));
+    let [rec] = await trail(PLATFORM_TRAIL_USER_ID, 'system.reg.users.get', since);
+    assert.ok(rec != null, 'the read of an account is recorded');
+    assert.deepEqual(rec.content.record.subject, { via: 'admin-key' });
+    assert.deepEqual(rec.content.record.target, { userId: target.userId, usernameHash: nameHashOf(target.username), hashKeyId: hashKeyId() });
+    const occurrences = JSON.stringify(rec).split(target.username).length - 1;
+    assert.equal(occurrences, target.userId === target.username ? 1 : 0, 'never the name: ' + JSON.stringify(rec));
+    const [read] = await trail(target.userId, 'account.readByAdmin', since);
+    assert.ok(read != null, 'the read account\'s own trail');
+    assert.equal(read.content.record.methodId, 'system.reg.users.get');
+
+    since = now();
+    const listed = await coreRequest.get('/reg/admin/servers/' + coreId + '/users').set('authorization', adminKey);
+    assert.equal(listed.status, 200, JSON.stringify(listed.body));
+    [rec] = await trail(PLATFORM_TRAIL_USER_ID, 'system.reg.servers.users.list', since);
+    assert.ok(rec != null, 'the list of a core\'s accounts is recorded');
+    assert.deepEqual(rec.content.record.target, { core: coreId });
+    assert.equal(rec.content.record.result.count, listed.body.users.length);
+    for (const u of listed.body.users) assert.ok(!JSON.stringify(rec).includes('"' + u.username + '"'), 'no account name');
+
+    // A refused read keeps its target with the account id; an unauthorized one is not recorded.
+    since = now();
+    const nobody = 'syauregno' + slug();
+    assert.equal((await coreRequest.get('/reg/admin/users/' + nobody).set('authorization', adminKey)).status, 404);
+    [rec] = await trail(PLATFORM_TRAIL_USER_ID, 'system.reg.users.get', since);
+    assert.ok(rec != null && String(rec.type).includes('error'), 'a refused read is recorded');
+    assert.deepEqual(rec.content.record.target, { usernameHash: nameHashOf(nobody), hashKeyId: hashKeyId() });
+    since = now();
+    assert.equal((await coreRequest.get('/reg/admin/users/' + target.username).set('authorization', 'syau-not-the-key')).status, 404);
+    await pause(200);
+    assert.equal((await trail(PLATFORM_TRAIL_USER_ID, 'system.reg.users.get', since, 0)).length, 0, 'an unauthorized call is not recorded');
+  });
+
+  it('[SYAU14] GET /system/admin/audit?targetUsername finds the acts on an account by the keyed hash of its name, never answers the name', async () => {
+    const target = await freshUser('syaunm');
+    const other = await freshUser('syaunm');
+    const since = now();
+    await coreRequest.get('/system/user-info/' + target.username).set('authorization', adminKey);
+    await coreRequest.get('/system/user-info/' + other.username).set('authorization', adminKey);
+    await coreRequest.get('/system/user-info/' + target.username.toUpperCase()).set('authorization', adminKey);
+    await trail(PLATFORM_TRAIL_USER_ID, 'system.getUserInfo', since, 3);
+    const read = (query) => coreRequest.get('/system/admin/audit').set('authorization', adminKey).query(query);
+    let res = await read({ methodId: 'system.getUserInfo', fromTime: since, targetUsername: target.username });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.auditEvents.length, 2, 'the name in any case');
+    for (const e of res.body.auditEvents) assert.equal(e.content.record.target.usernameHash, nameHashOf(target.username));
+    // (A test fixture may give the account its name as id: that id is not the name answered.)
+    assert.ok(!JSON.stringify(res.body).split(target.userId).join('').toLowerCase().includes(target.username), 'the name is not answered');
+    res = await read({ methodId: 'system.getUserInfo', fromTime: since, targetUsername: 'syaunobody' + slug() });
+    assert.deepEqual([res.status, res.body.auditEvents.length], [200, 0]);
+    res = await read({ targetUsername: 'x'.repeat(257) });
+    assert.equal(res.status, 400);
+    assert.ok(!JSON.stringify(res.body).includes('x'.repeat(257)), 'a refused name is not echoed');
+  });
+
+  it('[SYAU16] a handler route refused through the error answer names its account by id too, as a done act does', async () => {
+    const target = await freshUser('syaurf');
+    const since = now();
+    assert.equal((await coreRequest.delete('/system/users/' + target.username).set('authorization', adminKey)).status, 400, 'refused without onlyReg');
+    const [rec] = await trail(PLATFORM_TRAIL_USER_ID, 'system.users.delete', since);
+    assert.ok(rec != null && String(rec.type).includes('error'), 'the refusal is recorded');
+    assert.deepEqual(rec.content.record.target, { userId: target.userId, usernameHash: nameHashOf(target.username), hashKeyId: hashKeyId() });
+  });
+
+  it('[SYAU17] the whole public traffic opted in: a refused MFA recovery stores no account name', async () => {
+    const audit = require('audit').default;
+    const target = await freshUser('syaumfa');
+    const optIn = { audit: { platformTrail: { filter: { methods: { include: ['all'], exclude: [] } } } } };
+    try {
+      await withInjectedConfig(optIn, async () => {
+        await audit.reloadConfig();
+        const since = now();
+        const res = await coreRequest.post('/' + target.username + '/mfa/recover').send({ username: target.username, password: 'syau-wrong-password', recoveryCode: 'syau-recovery-code' });
+        assert.ok(res.status >= 400, 'refused: ' + res.status);
+        const rows = await trail(PLATFORM_TRAIL_USER_ID, 'mfa.recover', since);
+        assert.ok(rows.length >= 1, 'the refusal is kept (opted in)');
+        const text = JSON.stringify(rows).split(target.userId).join('');
+        for (const s of [target.username, 'syau-wrong-password', 'syau-recovery-code']) assert.ok(!text.includes(s), s + ' in ' + text);
+      });
+    } finally {
+      await audit.reloadConfig();
+    }
+  });
+
+  it('[SYAU15] a filtered read keeps a record once when a write between two batches shifts it into the next one', async () => {
+    const { readPlatformTrail } = require('api-server/src/methods/systemAdminAudit.ts');
+    // 1500 records, most recent first; after the first batch a new record arrives at the top.
+    let all = Array.from({ length: 1500 }, (_, i) => ({ id: 'syau-d' + i, time: 1e9 - i, content: { record: { subject: { via: 'admin-key' }, target: { userId: 'syau-dup' } } } }));
+    let reads = 0;
+    const storage = {
+      forUser: async () => ({
+        getEvents: async ({ options }) => {
+          const rows = all.slice(options.skip, options.skip + options.limit);
+          if (++reads === 1) all = [{ id: 'syau-new', time: 1e9 + 1, content: { record: { subject: { via: 'admin-key' }, target: { userId: 'syau-other' } } } }, ...all];
+          return rows;
+        }
+      })
+    };
+    const page = await readPlatformTrail(storage, { target: 'syau-dup', limit: 1000, skip: 500 });
+    const ids = page.events.map((e) => e.id);
+    assert.equal(new Set(ids).size, ids.length, 'no record twice');
+    assert.equal(ids.length, 1000);
+    assert.equal(ids[0], 'syau-d500');
+    assert.equal(ids[999], 'syau-d1499');
   });
 
   describe('[SYAS] an administrator session acts on this core\'s accounts only; the admin key as before', function () {

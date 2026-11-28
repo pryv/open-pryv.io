@@ -25,6 +25,10 @@ describe('[AFLT] AuditFilter', () => {
       assert.deepStrictEqual(f.isAudited('system.roles.set'), { syslog: true, platformTrail: true });
       assert.deepStrictEqual(f.isAudited('system.users.delete'), { syslog: true, platformTrail: true }, 'a /system handler id');
       assert.deepStrictEqual(f.isAudited('system.setup.createSession'), { syslog: true, platformTrail: true, platformTrailValidOnly: true });
+      // Reachable with any account's personal token: refusals in syslog only.
+      for (const m of ['system.adminSession.create', 'system.roles.claim']) {
+        assert.deepStrictEqual(f.isAudited(m), { syslog: true, platformTrail: true, platformTrailValidOnly: true }, m);
+      }
       // An account erased with the admin key: done calls whose record names an administrator.
       assert.deepStrictEqual(f.isAudited('auth.delete'), { syslog: true, platformTrail: true, platformTrailValidOnly: true, platformTrailAdminOnly: true });
       for (const m of ['auth.register', 'oauth.consent.shown', 'oauth.token.exchange_refused', 'sso.refused', 'mfa.recover']) {
@@ -57,7 +61,7 @@ describe('[AFLT] AuditFilter', () => {
       for (const area of areas) {
         for (const m of area.withoutUser) assert.ok(ADMIN_ACT_METHODS.includes(m) || area.notAudited.includes(m), m);
       }
-      for (const m of ['admin.cli.role.granted', 'admin.cli.role.deleted', 'admin.cli.claimCode.created', 'admin.cli.sessions.revoked', 'system.reg.servers.rename', 'system.reg.invitations.create', 'system.reg.records.set', 'system.reg.records.delete', 'auth.delete']) {
+      for (const m of ['admin.cli.role.granted', 'admin.cli.role.deleted', 'admin.cli.claimCode.created', 'admin.cli.sessions.revoked', 'system.reg.servers.rename', 'system.reg.invitations.create', 'system.reg.records.set', 'system.reg.records.delete', 'system.reg.users.get', 'system.reg.servers.users.list', 'auth.delete']) {
         assert.ok(ADMIN_ACT_METHODS.includes(m), m);
       }
       for (const m of ['auth.register', 'mfa.recover', 'sso.refused']) assert.ok(!ADMIN_ACT_METHODS.includes(m), m);

@@ -20,7 +20,7 @@
 //   node bin/admin.js roles grant <userId | username> --role <r> --scope <s> [--expires 30d] [--force]
 //   node bin/admin.js roles revoke <userId | username> [--role <r>] [--scope <s>] [--force]
 //   node bin/admin.js sessions revoke <userId | username>
-//   node bin/admin.js audit tail [--method <id>] [--since 1h] [--limit 50]
+//   node bin/admin.js audit tail [--method <id>] [--username <name>] [--since 1h] [--limit 50]
 //
 // A multi-core joiner that layers a host-config file passes it with
 // `--config <file>`, as for bin/master.js. A code is printed once and never
@@ -286,26 +286,51 @@ async function grantCommand (ctx, a, roles) {
 }
 
 /**
- * `audit tail [--method <id>] [--since <when>] [--limit <n>]`: the last
- * records of this core's platform trail (the administration acts), read from
- * the audit storage as GET /system/admin/audit reads it, oldest first.
+ * `audit tail [--method <id>] [--username <name>] [--since <when>] [--limit <n>]`:
+ * the last records of this core's platform trail (the administration acts),
+ * read from the audit storage as GET /system/admin/audit reads it, oldest
+ * first. With a storage of one file per account, a trail never written is not
+ * created, and a trail file of another OS user is not opened.
  */
 async function auditTailCommand ({ config, storages }, a) {
   const trail = require('../components/api-server/src/methods/systemAdminAudit.ts');
   const limit = a.limit != null ? Number(a.limit) : 20;
   if (!Number.isInteger(limit) || limit < 1 || limit > trail.AUDIT_READ_MAX_LIMIT) throw new Error('--limit must be a whole number from 1 to ' + trail.AUDIT_READ_MAX_LIMIT);
   if (a.method != null && !/^[A-Za-z0-9._-]{1,128}$/.test(a.method)) throw new Error('--method must be a method id (letters, digits, ., _, -)');
+  if (a.username != null && (a.username.length === 0 || a.username.length > 256)) throw new Error('--username must be a text of 1 to 256 characters');
   const fromTime = a.since != null ? parseSince(a.since, Date.now()) / 1000 : null;
   if (config.get('audit:active') !== true || !trail.keepsPlatformTrail(storages.auditStorage)) {
     console.error('admin: this core keeps no platform trail: audit is off, or its audit storage does not keep the trail.');
     return 1;
   }
-  const { events } = await trail.readPlatformTrail(storages.auditStorage, { fromTime, methodId: a.method ?? undefined, limit, skip: 0 });
-  if (events.length === 0) {
-    console.log('No record' + (a.method != null ? ' of ' + a.method : '') + (a.since != null ? ' since ' + iso(fromTime * 1000) : '') + ' in the platform trail of this core.');
+  const noRecord = () => console.log('No record' + (a.method != null ? ' of ' + a.method : '') + (a.username != null ? ' on that account' : '') +
+    (a.since != null ? ' since ' + iso(fromTime * 1000) : '') + ' in the platform trail of this core.');
+  // Never create the trail's file (nor its journal) as another user than the server's.
+  const fileProblem = trail.trailFileProblem(storages.auditStorage);
+  if (fileProblem?.absent === true) {
+    noRecord();
     return 0;
   }
+  if (fileProblem?.otherOwner != null) {
+    console.error('admin: the platform trail ' + fileProblem.path + ' belongs to the OS user with uid ' + fileProblem.otherOwner +
+      ': run this command as that user (reading it as another one could leave files the server cannot write).');
+    return 1;
+  }
+  if (a.username != null) {
+    const { accountNameHash } = require('../components/business/src/admin/accountNames.ts');
+    if (accountNameHash(a.username, config) == null) {
+      console.error('admin: this core has no key to hash account names (accountErasure.ledger.hmacKey or auth.adminAccessKey): the trail cannot be searched by username.');
+      return 1;
+    }
+  }
+  const page = await trail.readPlatformTrail(storages.auditStorage, { fromTime, methodId: a.method ?? undefined, targetUsername: a.username ?? undefined, limit, skip: 0 });
+  const events = page.events;
+  if (events.length === 0) noRecord();
   for (const e of events.reverse()) console.log(trailLine(e));
+  if (page.scanLimitReached === true) {
+    console.log('(the search read the ' + trail.AUDIT_READ_SCAN_MAX + ' most recent records only' +
+      (page.scannedToTime != null ? '; GET /system/admin/audit with toTime=' + page.scannedToTime + ' reads further' : '') + ')');
+  }
   return 0;
 }
 
@@ -484,6 +509,14 @@ async function storeAct (config, act, fields) {
     });
     const channels = filter.isAudited(methodId);
     if (!channels || channels.platformTrail !== true) return;
+    // Never create the trail's file (nor its journal) as another user than the server's.
+    const fileProblem = require('../components/api-server/src/methods/systemAdminAudit.ts').trailFileProblem(storage);
+    if (fileProblem?.otherOwner != null || (fileProblem?.absent === true && !fileProblem.creatable)) {
+      console.error('admin: the platform-trail record of this act was not written: the trail ' +
+        (fileProblem.otherOwner != null ? 'belongs to the OS user with uid ' + fileProblem.otherOwner : 'does not exist yet and its directory belongs to another OS user') +
+        ' (run this tool as the server\'s user); the act is in the log line.');
+      return;
+    }
     const C = require('../components/audit/src/Constants.ts').default;
     let osUser = 'unknown';
     try { osUser = require('os').userInfo().username; } catch (_e) { /* no passwd entry in some containers */ }
@@ -517,7 +550,7 @@ async function storeAct (config, act, fields) {
 }
 
 function parseArgs (list) {
-  const out = { command: null, sub: null, target: null, positional: [], new: false, hash: false, force: false, role: null, scope: null, ttl: null, expires: null, method: null, since: null, limit: null, config: null };
+  const out = { command: null, sub: null, target: null, positional: [], new: false, hash: false, force: false, role: null, scope: null, ttl: null, expires: null, method: null, since: null, limit: null, username: null, config: null };
   const rest = [];
   for (let i = 0; i < list.length; i++) {
     const a = list[i];
@@ -536,6 +569,7 @@ function parseArgs (list) {
     else if (a === '--method') out.method = value();
     else if (a === '--since') out.since = value();
     else if (a === '--limit') out.limit = value();
+    else if (a === '--username') out.username = value();
     else if (a === '--config') out.config = value();
     else if (a.startsWith('--')) throw new Error('unknown option ' + a);
     else rest.push(a);
@@ -566,7 +600,7 @@ function parseArgs (list) {
     case 'audit':
       out.sub = rest.shift() ?? null;
       if (out.sub === 'tail' && rest.length === 0) break;
-      throw new Error('audit tail [--method <id>] [--since <when>] [--limit <n>]');
+      throw new Error('audit tail [--method <id>] [--username <name>] [--since <when>] [--limit <n>]');
     default:
       throw new Error('unknown command ' + JSON.stringify(out.command));
   }
@@ -596,9 +630,11 @@ function printUsage (stream) {
     '                                                remove grants; the last owner grant needs --force',
     '  node bin/admin.js sessions revoke <userId|username>',
     '                                                refuse every administrator session opened until now',
-    '  node bin/admin.js audit tail [--method <id>] [--since <when>] [--limit <n>]',
+    '  node bin/admin.js audit tail [--method <id>] [--username <name>] [--since <when>] [--limit <n>]',
     '                                                the last records of this core\'s platform trail (default',
-    '                                                20, at most 1000); <when>: 90m, 12h, 30d or an ISO date-time',
+    '                                                20, at most 1000); <when>: 90m, 12h, 30d or an ISO date-time;',
+    '                                                --username: the acts on that account (matched by the keyed',
+    '                                                hash of its name: the trail never holds the name)',
     '',
     'Roles: owner, operator, support, auditor, app-reviewer, viewer.',
     'Scopes: platform, region:<id>, zone:<id>, hosting:<id>, core:<id>.',

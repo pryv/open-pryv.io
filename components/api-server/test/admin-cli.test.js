@@ -215,6 +215,35 @@ describe('[ADMC] bin/admin.js', function () {
     assert.strictEqual(runCli(['audit', 'tail', 'extra']).status, 2);
   });
 
+  it('[ADMC10] audit tail --username: the acts on that account, matched by the keyed hash of its name; never prints the name', async function () {
+    const config = await require('@pryv/boiler').getConfig();
+    const storage = require('storages').auditStorage;
+    if (config.get('audit:active') !== true || storage?.acceptsPlatformTrail?.() !== true) return this.skip();
+    const app = globalThis.app;
+    if (!app.systemAPI.has('system.getUserInfo')) await require('api-server/src/methods/system.ts').default(app.systemAPI, app.api);
+    const username = ('admctail' + Date.now().toString(36)).slice(0, 20);
+    const fu = await globalThis.getNewFixture().user(username, { password: 'admc-password-123' });
+    try {
+      const res = await globalThis.coreRequest.get('/system/user-info/' + username).set('authorization', config.get('auth:adminAccessKey'));
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      let tail;
+      for (let i = 0; i < 50; i++) { // the record is written once the answer is sent
+        tail = runCli(['audit', 'tail', '--username', username.toUpperCase(), '--method', 'system.getUserInfo', '--since', '10m']);
+        if (tail.stdout.includes('system.getUserInfo  done')) break;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      assert.strictEqual(tail.status, 0, tail.stderr);
+      assert.match(tail.stdout, /system\.getUserInfo {2}done {2}by admin-key {2}on .*usernameHash/);
+      // (A test fixture may give the account its name as id: that id is not the name printed.)
+      assert.ok(!tail.stdout.split(fu.attrs.id).join('').toLowerCase().includes(username), 'the name is not printed');
+      const none = runCli(['audit', 'tail', '--username', username + 'x', '--method', 'system.getUserInfo']);
+      assert.strictEqual(none.status, 0, none.stderr);
+      assert.match(none.stdout, /No record of system\.getUserInfo on that account/);
+    } finally {
+      await (await require('business/src/users/index.ts').getUsersRepository()).deleteOne(fu.attrs.id).catch(() => {});
+    }
+  });
+
   it('[ADMC9] each act of the tool leaves a platform-trail record: subject cli with the OS user, the account by id, role and scope, never a code', async function () {
     const config = await require('@pryv/boiler').getConfig();
     const storage = require('storages').auditStorage;
